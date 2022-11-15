@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 
 
-def mat_to_pt(mat_folder, pt_fname):
+def mat_to_pt(mat_folder, pt_fname, num_mode=2):
     file_lst = glob.glob(os.path.join(mat_folder, '*.mat'))
     print(f"Find {len(file_lst)} files.")
     q_idx = 0
@@ -21,14 +21,13 @@ def mat_to_pt(mat_folder, pt_fname):
         omega = torch.from_numpy(data['Evect'][0, nz_idx])
         inten = torch.from_numpy(data['swConv'][nz_idx, q_idx])
 
-        if len(omega) == 1:
-            omega = torch.cat((omega, omega), dim=0)
-        if len(inten) == 1:
-            inten = torch.cat((inten/2, inten/2), dim=0)
+        if len(nz_idx) >= num_mode:
+            omega = omega[np.argsort(omega)[:num_mode]]
+            inten = inten[np.argsort(omega)[:num_mode]]
 
-        param_lst.append(param)
-        omega_lst.append(omega)
-        inten_lst.append(inten)
+            param_lst.append(param)
+            omega_lst.append(omega)
+            inten_lst.append(inten)
     save_dict = {
         "param": torch.vstack(param_lst),
         "omega": torch.vstack(omega_lst),

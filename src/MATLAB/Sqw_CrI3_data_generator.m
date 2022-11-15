@@ -33,9 +33,13 @@ G  =  0;
 Dz = -0.1;
 for i_sample = 1: num_samples
     
-    J1 = J1_list(i_sample);
-    DM = DM_list(i_sample);
-    K = K_list(i_sample);
+%     J1 = J1_list(i_sample);
+%     DM = DM_list(i_sample);
+%     K = K_list(i_sample);
+
+    J1 = -1.1879;
+    DM = -0.7128;
+    K = -4.0639;
 
     params.J1 = J1;
     params.J2 = J2;
@@ -157,10 +161,10 @@ for i_sample = 1: num_samples
 end
 
 %%
-% figure
-% subplot(2,1,1)
-% sw_plotspec(Spec,'mode',1,'axLim',[0 25],'colorbar',false',...
-%     'colormap',[0 0 0],'imag',true,'sortMode',true,'dashed',true)
-% subplot(2,1,2)
-% sw_plotspec(Spec,'mode',3,'dE',0.5,'axLim',[0 25],'dashed',true)
-% swplot.subfigure(1,3,1)
+figure
+subplot(2,1,1)
+sw_plotspec(Spec,'mode',1,'axLim',[0 25],'colorbar',false',...
+    'colormap',[0 0 0],'imag',true,'sortMode',true,'dashed',true)
+subplot(2,1,2)
+sw_plotspec(Spec,'mode',3,'dE',0.5,'axLim',[0 25],'dashed',true)
+swplot.subfigure(1,3,1)

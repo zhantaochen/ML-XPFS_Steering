@@ -14,7 +14,7 @@ def fc_block(feat_in, feat_out, bias=True, nonlin="relu", batch_norm=False):
         pass
     return modules
 
-def construct_fc_net(feat_in, feat_out, feat_hid_list, fc_kwargs={}):
+def construct_fc_net(feat_in, feat_out, feat_hid_list, fc_kwargs={}, act_last=False):
     if feat_hid_list is None:
         feat_hid_list = [256, 64, 16]
     fc = [*fc_block(feat_in, feat_hid_list[0], **fc_kwargs)]
@@ -22,7 +22,10 @@ def construct_fc_net(feat_in, feat_out, feat_hid_list, fc_kwargs={}):
         zip(feat_hid_list[:-1], feat_hid_list[1:])
     ):
         fc += fc_block(feat_hid_1, feat_hid_2, **fc_kwargs)
-    fc += fc_block(feat_hid_list[-1], feat_out, bias=False, nonlin=None, batch_norm=False)
+    if act_last:
+        fc += fc_block(feat_hid_list[-1], feat_out, bias=False, nonlin='relu', batch_norm=False)
+    else:
+        fc += fc_block(feat_hid_list[-1], feat_out, bias=False, nonlin=None, batch_norm=False)
     fc = torch.nn.Sequential(*fc)
     return fc
 
