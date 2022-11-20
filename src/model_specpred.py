@@ -8,7 +8,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import scipy.constants as const
 
 from .utils_data import mat_to_pt
-from .utils_model import construct_fc_net, batch_spec_to_Sqt
+from .utils_model import construct_fc_net, batch_spec_to_Sqt, array2tensor, tensor2array
 from tqdm import tqdm
 
 class SpectrumPredictor(pl.LightningModule):
@@ -63,7 +63,6 @@ class SpectrumPredictor(pl.LightningModule):
         train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
         trainer.fit(self, train_dataloader)
-
 
     def fit_measurement(
         self, t, S, 
@@ -129,7 +128,7 @@ class SpectrumPredictor(pl.LightningModule):
             loss = loss_batch.mean()
             # loss = F.mse_loss(S_pred, torch.atleast_2d(S).repeat_interleave(batch_size,dim=0).to(S_pred))
             
-            if loss < 0.1:
+            if loss < 0.001 * S[0]:
                 break
             
             optimizer.zero_grad()
@@ -199,8 +198,88 @@ class SpectrumPredictor(pl.LightningModule):
                 retrain_counter += 1
                 last_retrain_iter = i_iter
 
-                
         return loss_hist
+
+    def fit_measurement_with_OptBayesExpt_parameters(
+        self, t, S, params,
+        batch_size=10, maxiter=100, lr=0.001,
+        replace_worst_with_mean=True, save_param_hist=True
+    ):
+        """_summary_
+
+        Parameters
+        ----------
+        t : _type_
+            _description_
+        S : _type_
+            _description_
+        batch_size : int, optional
+            _description_, by default 10
+        maxiter : int, optional
+            _description_, by default 100
+        lr : float, optional
+            _description_, by default 0.001
+        retrain_criteria : tuple (N, M), optional
+            if loss does not decrease by M in N steps, perform new training, by default None
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+        t = array2tensor(t)
+        S = array2tensor(S)
+        
+        for (name, mean, std) in zip(*params):
+            param = mean + std*torch.randn(batch_size,1)
+            self.register_parameter(name, torch.nn.Parameter(param))
+        param_lst = []
+        for name in params[0]:
+            param_lst.append({'params': eval(f'self.{name}')})
+        optimizer = torch.optim.Adam(param_lst, lr=lr)
+
+        loss_hist = []
+        if save_param_hist: 
+            self.param_hist = {name: [] for name in params[0]}
+        pbar = tqdm(range(maxiter))
+        for i_iter in pbar:
+            # x = torch.cat((self.J, self.D, self.K), dim=1)
+            x = torch.cat((self.J, self.D), dim=1)
+            y = self.fc_net(x.to(self.device))
+            omega, inten = torch.split(y, [self.num_mode, self.num_mode], dim=1)
+            # batch x mode x time
+            S_envelope = torch.exp(-torch.einsum("bm,t->bmt", F.relu(self.gamma), t))
+            S_pred = (batch_spec_to_Sqt(omega, inten, t) * S_envelope).sum(dim=1)
+            S_pred = S_pred / S_pred[:,0,None] * S[0]
+            loss_batch = (S_pred - torch.atleast_2d(S).repeat_interleave(batch_size,dim=0).to(S_pred)).pow(2).mean(dim=1)
+            loss = loss_batch.mean()
+            # loss = F.mse_loss(S_pred, torch.atleast_2d(S).repeat_interleave(batch_size,dim=0).to(S_pred))
+            
+            if loss < 0.001 * S[0]:
+                break
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            loss_hist.append(loss.item())
+            pbar.set_description(f"Iter {i_iter:4d} Loss {loss.item():4f}")
+            
+            # if replace_worst_with_mean and ((loss_batch.max().abs() - loss_batch.min().abs())/loss_batch.min().abs() > 5.0):
+            #     idx_loss_descending = torch.argsort(loss_batch, descending=True)
+            #     idx_worst = idx_loss_descending[:2]
+            #     idx_best =  idx_loss_descending[-2:]
+                # with torch.no_grad():
+                #     self.gamma.data[idx_worst] = self.gamma.data[idx_best].mean(dim=0)
+                #     self.J.data[idx_worst] = self.J.data[idx_best].mean() + torch.randn_like(self.J.data[idx_worst]) * 0.01
+                #     self.D.data[idx_worst] = self.D.data[idx_best].mean() + torch.randn_like(self.J.data[idx_worst]) * 0.01
+                #     self.K.data[idx_worst] = self.K.data[idx_best].mean() + torch.randn_like(self.J.data[idx_worst]) * 0.01
+                
+            if save_param_hist: 
+                for name in params[0]:
+                    self.param_hist[name].append(eval(f'self.{name}.data'))
+
+        return loss_hist, save_param_hist
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -212,8 +291,3 @@ class SpectrumPredictor(pl.LightningModule):
 
         return loss
 
-class TimeSeriesPredictor(pl.LightningModule):
-    def __init__(self, num_mode=2):
-        super().__init__()
-        self.num_mode = 2
-        self.register_parameter("tau", torch.nn.Parameter(torch.rand(2)))

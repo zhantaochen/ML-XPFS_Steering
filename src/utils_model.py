@@ -54,3 +54,21 @@ def lorentzian(center, Gamma, intensity, resolution=0.1, minimum=None):
         w = torch.arange(center-8*Gamma, center+8*Gamma+resolution, resolution)
     l = intensity/np.pi * 0.5*Gamma / ((w-center)**2 + (0.5*Gamma)**2)
     return w, l
+
+def array2tensor(arr):
+    if isinstance(arr, np.ndarray):
+        tensor = torch.from_numpy(arr)
+        return tensor
+    elif isinstance(arr, torch.Tensor):
+        return arr
+    else:
+        raise ValueError("Input should be either numpy array or torch tensor.")
+
+def tensor2array(tensor):
+    if isinstance(tensor, torch.Tensor):
+        arr = tensor.detach().cpu().numpy()
+        return arr
+    elif isinstance(tensor, np.ndarray):
+        return tensor
+    else:
+        raise ValueError("Input should be either numpy array or torch tensor.")
