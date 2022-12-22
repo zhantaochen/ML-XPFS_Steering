@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import scipy.constants as const
+from scipy.interpolate import interp1d
 
 meV_to_2piTHz = 2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0]
 
@@ -14,14 +15,18 @@ def fc_block(feat_in, feat_out, bias=True, nonlin="relu", batch_norm=False):
         pass
     return modules
 
-def construct_fc_net(feat_in, feat_out, feat_hid_list, fc_kwargs={}, act_last=False):
+def construct_fc_net(feat_in, feat_out, feat_hid_list, fc_kwargs={}, act_last=False, dropout_rate=None):
     if feat_hid_list is None:
-        feat_hid_list = [256, 64, 16]
+        feat_hid_list = [256, 128, 64]
     fc = [*fc_block(feat_in, feat_hid_list[0], **fc_kwargs)]
+    if dropout_rate is not None:
+        fc += [torch.nn.Dropout(p=dropout_rate, inplace=False)]
     for i, (feat_hid_1, feat_hid_2) in enumerate(
         zip(feat_hid_list[:-1], feat_hid_list[1:])
     ):
         fc += fc_block(feat_hid_1, feat_hid_2, **fc_kwargs)
+        if dropout_rate is not None:
+            fc += [torch.nn.Dropout(p=dropout_rate, inplace=False)]
     if act_last:
         fc += fc_block(feat_hid_list[-1], feat_out, bias=False, nonlin='relu', batch_norm=False)
     else:
@@ -52,8 +57,19 @@ def lorentzian(center, Gamma, intensity, resolution=0.1, minimum=None):
         w = torch.arange(max(0, center-8*Gamma), center+8*Gamma+resolution, resolution)
     else:
         w = torch.arange(center-8*Gamma, center+8*Gamma+resolution, resolution)
-    l = intensity/np.pi * 0.5*Gamma / ((w-center)**2 + (0.5*Gamma)**2)
+    l = 1 /np.pi * 0.5*Gamma / ((w-center)**2 + (0.5*Gamma)**2)
+    l = intensity * l / torch.trapz(l, w)
     return w, l
+
+def lorentzian_on_grid(center, Gamma, intensity, w_grid):
+    w_grid_large = torch.arange(
+        min(w_grid.min(), center-10*Gamma), 
+        max(w_grid.max(), center+10*Gamma), 
+        w_grid[1] - w_grid[0]
+        )
+    l = 1 /np.pi * 0.5*Gamma / ((w_grid-center)**2 + (0.5*Gamma)**2)
+    l =  intensity * l / torch.trapz(l, w_grid)
+    return l
 
 def array2tensor(arr):
     if isinstance(arr, np.ndarray):

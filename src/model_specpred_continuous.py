@@ -11,15 +11,17 @@ from .utils_data import mat_to_pt
 from .utils_model import construct_fc_net, batch_spec_to_Sqt
 from tqdm import tqdm
 
-class SpectrumPredictor(pl.LightningModule):
-    def __init__(self, num_param_in=3, num_eng_bin=1000):
+class ContinuousSpectrumPredictor(pl.LightningModule):
+    def __init__(self, num_param_in=3, num_eng_bin=1000, feat_hid_list=None):
         super().__init__()
         self.save_hyperparameters()
         # estimated number of magnon to be predicted
         self.num_eng_bin = num_eng_bin
         # spectrum predicting network
+        if feat_hid_list is None:
+            feat_hid_list = [num_param_in*2, num_eng_bin//2, num_eng_bin //2, num_eng_bin]
         self.fc_net = construct_fc_net(
-            feat_in=num_param_in, feat_out=self.num_eng_bin, feat_hid_list=None, act_last=True
+            feat_in=num_param_in, feat_out=self.num_eng_bin, feat_hid_list=feat_hid_list, act_last=True
         )
         # unit conversion, this way time is in [ps]
         self.meV_to_2piTHz = 2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0]
