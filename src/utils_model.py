@@ -51,7 +51,6 @@ def batch_spec_to_Sqt(omega, inten, time):
     omega = torch.atleast_2d(omega)
     return torch.einsum("bm, bmt -> bmt", inten, torch.cos(meV_to_2piTHz * torch.einsum("bw, t -> bwt", omega, time)))
 
-
 def lorentzian(center, Gamma, intensity, resolution=0.1, minimum=None):
     if minimum is not None:
         w = torch.arange(max(0, center-8*Gamma), center+8*Gamma+resolution, resolution)
