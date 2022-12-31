@@ -67,7 +67,7 @@ class SpectrumPredictor(pl.LightningModule):
     def fit_measurement_with_OptBayesExpt_parameters(
         self, t, S, params,
         batch_size=10, maxiter=100, lr=0.001,
-        replace_worst_with_mean=True, save_param_hist=True
+        replace_worst_with_mean=True, save_param_hist=True, verbose=False
     ):
         """_summary_
 
@@ -105,7 +105,11 @@ class SpectrumPredictor(pl.LightningModule):
         loss_hist = []
         if save_param_hist: 
             self.param_hist = {name: [] for name in params[0]}
-        pbar = tqdm(range(maxiter))
+        if verbose:
+            pbar = tqdm(range(maxiter), desc=f"Iter {i_iter:4d} Loss {loss.item():4f}")
+        else:
+            pbar = range(maxiter)
+
         for i_iter in pbar:
             # x = torch.cat((self.J, self.D, self.K), dim=1)
             x = torch.cat((self.J, self.D), dim=1)
@@ -128,7 +132,6 @@ class SpectrumPredictor(pl.LightningModule):
             optimizer.step()
 
             loss_hist.append(loss.item())
-            pbar.set_description(f"Iter {i_iter:4d} Loss {loss.item():4f}")
             
             # if replace_worst_with_mean and ((loss_batch.max().abs() - loss_batch.min().abs())/loss_batch.min().abs() > 5.0):
             #     idx_loss_descending = torch.argsort(loss_batch, descending=True)
@@ -157,3 +160,13 @@ class SpectrumPredictor(pl.LightningModule):
 
         return loss
 
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_pred = self.fc_net(x)
+
+        loss = F.mse_loss(y_pred, y)
+        
+        self.log('val_loss', loss.item())
+
+        return loss

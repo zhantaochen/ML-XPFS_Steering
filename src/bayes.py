@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
-from .utils_model import construct_fc_net, array2tensor, tensor2array
+from .utils_model import construct_fc_net, array2tensor, tensor2array, batch_spec_to_Sqt
 
 import scipy.constants as const
 meV_to_2piTHz = torch.tensor(2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0])
@@ -13,7 +13,8 @@ def jit_batch_spec_to_Sqt(omega, inten, time, meV_to_2piTHz=meV_to_2piTHz):
     inten = torch.atleast_2d(inten)
     omega = torch.atleast_2d(omega)
     return torch.einsum("bm, bmt -> bmt", inten, torch.cos(meV_to_2piTHz * torch.einsum("bw, t -> bwt", omega, time)))
-    
+    # return torch.einsum("bm, bmt -> bmt", inten, torch.cos(meV_to_2piTHz * omega[...,None] * time[None,None,:]))
+
 class OptBayesExpt_CustomCost(obe.OptBayesExpt):
     def __init__(self, cost_repulse_height=0.5, cost_repulse_width=0.05, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -22,30 +23,18 @@ class OptBayesExpt_CustomCost(obe.OptBayesExpt):
         self.reset_proposed_setting()
 
     def cost_estimate(self):
-        # if not hasattr(self, 'proposed_settings'):
-        #     return 1.0
-        # else:
         bins = self.proposed_settings["setting_bin"]
         cost = np.ones_like(self.setting_indices).astype('float')
         for idx in np.nonzero(bins)[0]:
             cost += self.cost_repulse_height * bins[idx] * np.squeeze(np.exp(-((self.allsettings - self.allsettings[:,idx]) / self.cost_repulse_width)**2))
-        # return 1.0
         return cost
+        # return 1.0
 
 
 class BayesianInference:
     NUM_SAMPLES_PER_STEP = 10
     meV_to_2piTHz = torch.tensor(2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0])
-    def __init__(self, model, settings=(), parameters=(), constants=(), pulse_width=None, batch_size=500, scale_factor=1.):
-        """_summary_
-
-        Parameters
-        ----------
-        model : torch.nn.Module
-        param_prior : dict
-            {'p1': {'mu': 0., 'sigma': 1.}}
-        settings : tuple/list of arrays/tensors
-        """
+    def __init__(self, model, settings=(), parameters=(), constants=(), pulse_width=None, reference_setting_value=None):
         # super().__init__()
         # self.register_module('forward_model', model)
         self.forward_model = model
@@ -56,10 +45,18 @@ class BayesianInference:
 
         if self.pulse_width is not None:
             self.model_function = self.model_function_conv
+            # self.model_function = self.model_function_conv_new
         else:
             self.model_function = self.model_function_noconv
         self.init_OptBayesExpt()
         self.init_saving_lists()
+
+        self.reference_setting_value = reference_setting_value
+
+        # if device is None:
+        #     self.__device = 'cuda' if torch.cuda.is_exist() else 'cpu'
+        # else:
+        #     self.__device = device
 
     def init_OptBayesExpt(self, ):
         self.obe_model = OptBayesExpt_CustomCost(
@@ -88,16 +85,22 @@ class BayesianInference:
         # unpack the settings
         # t, = sets
         # unpack model parameters
+
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
         t, = sets
         J, D, gamma = pars
         if isinstance(t, (int, float)):
             t = torch.tensor([t,])
         else:
             t = torch.atleast_1d(array2tensor(t))
+        t = t.to(device)
+
         if isinstance(gamma, (int, float)):
             gamma = torch.atleast_2d(torch.tensor([gamma]))
         else:
             gamma = array2tensor(gamma)[:,None]
+        gamma = gamma.to(device)
 
         if isinstance(J, (int, float)):
             J = torch.tensor([[J]])
@@ -106,8 +109,9 @@ class BayesianInference:
             J = array2tensor(J)[:,None]
             D = array2tensor(D)[:,None]
 
-        x = torch.cat((J, D), dim=1)
-        y = self.forward_model(x.to(self.forward_model.device)).cpu()
+        self.forward_model.to(device)
+        x = torch.cat((J, D), dim=1).to(device)
+        y = self.forward_model(x)
 
         omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
         S_envelope = torch.exp(-torch.einsum("bm,t->bmt", F.relu(gamma), t))
@@ -130,16 +134,22 @@ class BayesianInference:
         # unpack the settings
         # t, = sets
         # unpack model parameters
+        device = 'cpu'
+        # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
         t, = sets
         J, D, gamma = pars
         if isinstance(t, (int, float)):
             t = torch.tensor([t,])
         else:
             t = torch.atleast_1d(array2tensor(t))
+        t = t.to(device)
+
         if isinstance(gamma, (int, float)):
             gamma = torch.atleast_2d(torch.tensor([gamma]))
         else:
             gamma = array2tensor(gamma)[:,None]
+        gamma = gamma.to(device)
 
         if isinstance(J, (int, float)):
             J = torch.tensor([[J]])
@@ -147,32 +157,35 @@ class BayesianInference:
         else:
             J = array2tensor(J)[:,None]
             D = array2tensor(D)[:,None]
-
-        x = torch.cat((J, D), dim=1)
-        y = self.forward_model(x.to(self.forward_model.device)).cpu()
+        
+        self.forward_model.to(device)
+        x = torch.cat((J, D), dim=1).to(device)
+        y = self.forward_model(x)
 
         # y = torch.tensor([[ 6.1967, 15.8520,  5.3372,  3.6628]])
 
         omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
-        t_extended = []
+        t_extended = [torch.linspace(_t-self.pulse_width/2, _t+self.pulse_width/2, int(self.pulse_width/0.01)).to(device) for _t in t]
         # S_pred = torch.zeros((x.shape[0],1,t.shape[0]))
-        for i_t, _t in enumerate(t):
-            t_extended.append(
-                torch.linspace(_t-self.pulse_width/2, _t+self.pulse_width/2, int(self.pulse_width/0.01)))
-        t_extended = torch.vstack(t_extended).flatten()
+        # for i_t, _t in enumerate(t):
+        #     t_extended.append(
+        #         torch.linspace(_t-self.pulse_width/2, _t+self.pulse_width/2, int(self.pulse_width/0.01)).to(device))
+        t_extended = torch.vstack(t_extended).flatten().to(device)
         S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t_extended.abs().reshape(len(t),-1)))
         I_pred = torch.trapz(
             (jit_batch_spec_to_Sqt(
                 omega, inten, t_extended, self.meV_to_2piTHz
                 ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
                 t_extended.reshape(len(t),-1), dim=-1) / self.pulse_width
-        # S_pred = (batch_spec_to_Sqt(omega, inten, t) * S_envelope).sum(dim=1)
-        # S_pred = S_pred / batch_spec_to_Sqt(omega, inten, torch.tensor([0,])).sum(dim=1)
-        # calculate the Lorentzian
+        # I_pred = torch.trapz(
+        #     (batch_spec_to_Sqt(
+        #         omega, inten, t_extended
+        #         ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
+        #         t_extended.reshape(len(t),-1), dim=-1) / self.pulse_width
+        # I_pred = torch.rand(t.shape)
         return I_pred.detach().cpu().squeeze().numpy()
 
-    def step_OptBayesExpt(self, func_measure, num_samples_per_step=10):
-        
+    def step_OptBayesExpt(self, func_measure):
         # next_setting = self.obe_model.opt_setting()
         next_setting = self.obe_model.get_setting()
         if self.obe_model.selection_method in ['optimal', 'good']:
@@ -182,7 +195,13 @@ class BayesianInference:
         next_observable = func_measure.simdata(next_setting)
         
         measurement = (next_setting, next_observable, func_measure.noise_level)
-        self.obe_model.pdf_update(measurement)
+        if self.reference_setting_value is not None:
+            ref_setting, ref_value = self.reference_setting_value
+            ref_value_denum = self.obe_model.eval_over_all_parameters(ref_setting)[0].mean()
+            scale_factor = ref_value / ref_value_denum
+        else:
+            scale_factor = None
+        self.obe_model.pdf_update(measurement, scale_factor=scale_factor)
 
         self.measured_settings.append(next_setting)
         self.measured_observables.append(next_observable)
@@ -194,12 +213,16 @@ class BayesianInference:
             # if np.all(param_std[-1] < 1e-2):
             #     break
 
-    def run_N_steps_OptBayesExpt(self, N, func_measure, ret_particles=False):
-        print(f"using the {self.obe_model.selection_method} setting")
+    def run_N_steps_OptBayesExpt(self, N, func_measure, ret_particles=False, verbose=False):
         if ret_particles:
             particles = [self.obe_model.particles.copy()]
             particle_weights = [self.obe_model.particle_weights.copy()]
-        for i in tqdm(range(N), desc="Running OptBayesExpt"):
+        if verbose:
+            print(f"using the {self.obe_model.selection_method} setting")
+            pbar = tqdm(range(N), desc="Running OptBayesExpt")
+        else:
+            pbar = range(N)
+        for i in pbar:
             self.step_OptBayesExpt(func_measure)
             if ret_particles:
                 particles.append(self.obe_model.particles.copy())
@@ -256,7 +279,11 @@ class BayesianInference:
         measurements = func_measure.simdata(self.settings)
         return self.settings, measurements
     
+    # def update_OptBayesExpt_particles(self,):
+    #     particles = torch.cat([eval(f'self.forward_model.{name}.data').T for name in ('J', 'D', 'gamma')], dim=0).cpu().numpy()
+    #     self.obe_model.particles = particles
+    #     self.obe_model.particle_weights = np.ones(self.obe_model.n_particles) / self.obe_model.n_particles
     def update_OptBayesExpt_particles(self,):
-        particles = torch.cat([eval(f'bayes.forward_model.{name}.data').T for name in ('J', 'D', 'gamma')], dim=0).cpu().numpy()
+        particles = torch.cat([self.forward_model.J.data.T, self.forward_model.D.data.T, self.forward_model.gamma.data.T], dim=0).cpu().numpy()
         self.obe_model.particles = particles
         self.obe_model.particle_weights = np.ones(self.obe_model.n_particles) / self.obe_model.n_particles
