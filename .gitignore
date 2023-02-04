@@ -1,4 +1,5 @@
 data
 training_logs
+production_models
 *.pyc
 figs
