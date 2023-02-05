@@ -4,6 +4,7 @@ import scipy.constants as const
 from scipy.interpolate import interp1d
 
 meV_to_2piTHz = 2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0]
+meV_to_2piTHz_tensor = torch.tensor(2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0])
 
 def fc_block(feat_in, feat_out, bias=True, nonlin="relu", batch_norm=False):
     modules = [torch.nn.Linear(feat_in, feat_out, bias=bias)]
@@ -50,6 +51,14 @@ def batch_spec_to_Sqt(omega, inten, time):
     inten = torch.atleast_2d(inten)
     omega = torch.atleast_2d(omega)
     return torch.einsum("bm, bmt -> bmt", inten, torch.cos(meV_to_2piTHz * torch.einsum("bw, t -> bwt", omega, time)))
+
+
+@torch.jit.script
+def jit_batch_spec_to_Sqt(omega, inten, time, meV_to_2piTHz=meV_to_2piTHz_tensor):
+    inten = torch.atleast_2d(inten)
+    omega = torch.atleast_2d(omega)
+    return torch.einsum("bm, bmt -> bmt", inten, torch.cos(meV_to_2piTHz * torch.einsum("bw, t -> bwt", omega, time)))
+    # return torch.einsum("bm, bmt -> bmt", inten, torch.cos(meV_to_2piTHz * omega[...,None] * time[None,None,:]))
 
 def lorentzian(center, Gamma, intensity, resolution=0.1, minimum=None):
     if minimum is not None:
