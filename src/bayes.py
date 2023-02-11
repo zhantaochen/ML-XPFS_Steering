@@ -1,6 +1,7 @@
 from functools import partial
 import optbayesexpt as obe
 import numpy as np
+from numpy.linalg import LinAlgError
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -60,8 +61,13 @@ class BayesianInference:
     def init_OptBayesExpt(self, ):
         self.obe_model = OptBayesExpt_CustomCost(
             measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
-            constants=self.constants,
+            constants=self.constants, utility_method='variance_full',
             cost_repulse_height=0.25, cost_repulse_width=0.05)
+        
+        # self.obe_model = OptBayesExpt_CustomCost(
+        #     measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
+        #     constants=self.constants, utility_method='variance_approx',
+        #     cost_repulse_height=0.25, cost_repulse_width=0.05)
         # self.obe_model = obe.OptBayesExpt(measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, constants=self.constants)
         
     def init_saving_lists(self, ):
@@ -122,6 +128,19 @@ class BayesianInference:
             return I_pred.squeeze()
         else:
             return I_pred.detach().cpu().squeeze().numpy()
+    
+    @torch.jit.script
+    def get_I(t, y, gamma, pulse_width, meV_to_2piTHz):
+        omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
+        t_extended = [torch.linspace(_t-pulse_width/2, _t+pulse_width/2, int(pulse_width/0.01)).to(y) for _t in t]
+        t_extended = torch.vstack(t_extended).flatten().to(y)
+        S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t_extended.abs().reshape(len(t),-1)))
+        I_pred = torch.trapz(
+            (jit_batch_spec_to_Sqt(
+                omega, inten, t_extended, meV_to_2piTHz
+                ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
+                t_extended.reshape(len(t),-1), dim=-1) / pulse_width
+        return I_pred
 
     def model_function_conv(self, sets, pars, cons, ret_tensor=False):
         """ Evaluates a trusted model of the experiment's output
@@ -148,15 +167,19 @@ class BayesianInference:
         else:
             y_mu, y_var = self.forward_model(x)
             y = torch.distributions.MultivariateNormal(y_mu, y_var).sample()
-        omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
-        t_extended = [torch.linspace(_t-self.pulse_width/2, _t+self.pulse_width/2, int(self.pulse_width/0.01)).to(device) for _t in t]
-        t_extended = torch.vstack(t_extended).flatten().to(device)
-        S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t_extended.abs().reshape(len(t),-1)))
-        I_pred = torch.trapz(
-            (jit_batch_spec_to_Sqt(
-                omega, inten, t_extended, self.meV_to_2piTHz
-                ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
-                t_extended.reshape(len(t),-1), dim=-1) / self.pulse_width
+        # omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
+        # t_extended = [torch.linspace(_t-self.pulse_width/2, _t+self.pulse_width/2, int(self.pulse_width/0.01)).to(device) for _t in t]
+        # t_extended = torch.vstack(t_extended).flatten().to(device)
+        # S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t_extended.abs().reshape(len(t),-1)))
+        # I_pred = torch.trapz(
+        #     (jit_batch_spec_to_Sqt(
+        #         omega, inten, t_extended, self.meV_to_2piTHz
+        #         ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
+        #         t_extended.reshape(len(t),-1), dim=-1) / self.pulse_width
+
+        I_pred = self.get_I(t, y, gamma, 
+                            torch.tensor(self.pulse_width).to(y).clone().detach(), 
+                            torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
 
         if ret_tensor:
             return I_pred.squeeze()
@@ -164,7 +187,6 @@ class BayesianInference:
             return I_pred.detach().cpu().squeeze().numpy()
 
     def step_OptBayesExpt(self, func_measure):
-        # next_setting = self.obe_model.opt_setting()
         next_setting = self.obe_model.get_setting()
         if self.obe_model.selection_method in ['optimal', 'good']:
             self.utility_list.append(self.obe_model.utility_stored)
@@ -191,12 +213,38 @@ class BayesianInference:
             # if np.all(param_std[-1] < 1e-2):
             #     break
 
-    def run_N_steps_OptBayesExpt(
-        self, N, func_measure, 
-        steps_on_maximization=None, ret_particles=False, verbose=False):
+    # def run_N_steps_OptBayesExpt(
+    #     self, N, func_measure, 
+    #     steps_on_maximization=None, ret_particles=False, verbose=False):
+    #     if ret_particles:
+    #         particles = [self.obe_model.particles.copy()]
+    #         particle_weights = [self.obe_model.particle_weights.copy()]
+    #     if verbose:
+    #         print(f"using the {self.obe_model.selection_method} setting")
+    #         pbar = tqdm(range(N), desc="Running OptBayesExpt")
+    #     else:
+    #         pbar = range(N)
+    #     for i in pbar:
+    #         self.step_OptBayesExpt(func_measure)
+    #         if steps_on_maximization is not None:
+    #             # _, _ = self.run_gradient_desc_on_current_measurements(
+    #             #     steps_on_maximization, lr=0.001, init_bayes_guess=True, batch_size=self.obe_model.particles.shape[1])
+    #             # self.update_OptBayesExpt_particles(update_weights=False)
+    #             # print('updated')
+    #             for j in range(steps_on_maximization):
+    #                 self.step_Maximization()
+    #         if ret_particles:
+    #             particles.append(self.obe_model.particles.copy())
+    #             particle_weights.append(self.obe_model.particle_weights.copy())
+    #     if ret_particles:
+    #         return np.asarray(particles), np.asarray(particle_weights)
+    
+    def run_N_steps_OptBayesExpt_wo_GD(
+        self, N, func_measure, ret_particles=False, verbose=False):
         if ret_particles:
             particles = [self.obe_model.particles.copy()]
             particle_weights = [self.obe_model.particle_weights.copy()]
+            errors = []
         if verbose:
             print(f"using the {self.obe_model.selection_method} setting")
             pbar = tqdm(range(N), desc="Running OptBayesExpt")
@@ -204,24 +252,20 @@ class BayesianInference:
             pbar = range(N)
         for i in pbar:
             self.step_OptBayesExpt(func_measure)
-            if steps_on_maximization is not None:
-                # _, _ = self.run_gradient_desc_on_current_measurements(
-                #     steps_on_maximization, lr=0.001, init_bayes_guess=True, batch_size=self.obe_model.particles.shape[1])
-                # self.update_OptBayesExpt_particles(update_weights=False)
-                # print('updated')
-                for j in range(steps_on_maximization):
-                    self.step_Maximization()
+            current_error = self.estimate_error()
             if ret_particles:
                 particles.append(self.obe_model.particles.copy())
                 particle_weights.append(self.obe_model.particle_weights.copy())
+                errors.append(current_error)
         if ret_particles:
-            return np.asarray(particles), np.asarray(particle_weights)
-        
+            return np.asarray(particles), np.asarray(particle_weights), errors
+
     def run_N_steps_OptBayesExpt_w_GD(
-        self, N, func_measure, N_GD=100, lr=1e-2, gd_seperation=20, error_criterion=50, ret_particles=False, verbose=False):
+        self, N, func_measure, run_GD=True, N_GD=100, lr=1e-2, gd_seperation=20, error_criterion=50, std_criterion=1e-3, ret_particles=False, verbose=False):
         if ret_particles:
             particles = [self.obe_model.particles.copy()]
             particle_weights = [self.obe_model.particle_weights.copy()]
+            errors = []
         if verbose:
             print(f"using the {self.obe_model.selection_method} setting")
             pbar = tqdm(range(N), desc="Running OptBayesExpt")
@@ -229,21 +273,42 @@ class BayesianInference:
             pbar = range(N)
         last_gd_step = 0
         for i in pbar:
-            self.step_OptBayesExpt(func_measure)
-            if (self.estimate_error() > error_criterion) and (i > last_gd_step + gd_seperation):
-                print("running GD")
+            try:
+                self.step_OptBayesExpt(func_measure)
+            except LinAlgError:
+                if verbose:
+                    print(f"running GD at step {i}, current error {current_error}")
+                loss_hist, param_hist = self.run_gradient_desc_on_current_measurements(
+                    N_GD, lr=lr, batch_size=self.obe_model.n_particles, init_bayes_guess=False)
+                particles_to_update = tensor2array(torch.cat([param_hist[key][-1].unsqueeze(0) for key in param_hist.keys()], dim=0))
+                self.update_OptBayesExpt_particles(particles_to_update)
+                last_gd_step = i
+
+            current_error = self.estimate_error()
+            if current_error > error_criterion and self.obe_model.std().mean() < 1e-2:
+                run_GD = True
+            else:
+                run_GD = False
+
+            if (i >= last_gd_step + gd_seperation) and run_GD:
+                if verbose:
+                    print(f"running GD at step {i}, current error {current_error}")
                 loss_hist, param_hist = self.run_gradient_desc_on_current_measurements(
                     N_GD, lr=lr, batch_size=self.obe_model.n_particles, init_bayes_guess=False)
                 particles_to_update = tensor2array(torch.cat([param_hist[key][-1].unsqueeze(0) for key in param_hist.keys()], dim=0))
                 self.update_OptBayesExpt_particles(particles_to_update)
                 last_gd_step = i
             # else:
-            #     print(self.estimate_error(), i, last_gd_step)
+            #     print(f"skipping GD at step {i}, current error {current_error}")
+            # else:
+            #     self.step_Maximization(max_step=1, lr=lr, min_datapoints=1)
+                
             if ret_particles:
                 particles.append(self.obe_model.particles.copy())
                 particle_weights.append(self.obe_model.particle_weights.copy())
+                errors.append(current_error)
         if ret_particles:
-            return np.asarray(particles), np.asarray(particle_weights)
+            return np.asarray(particles), np.asarray(particle_weights), errors
 
     def get_all_measurements(self,):
         settings = np.asarray(self.measured_settings)
@@ -277,7 +342,7 @@ class BayesianInference:
             # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
                 self.forward_model, t, S, (('J', 'D', 'gamma'), self.obe_model.mean(), self.obe_model.std()), lr=lr,
-                maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=True, device=self.device
+                maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )
         else:
             # loss_hist, params_hist = self.forward_model.fit_measurement_with_OptBayesExpt_parameters(
@@ -286,7 +351,7 @@ class BayesianInference:
             # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
                 self.forward_model, t, S, (('J', 'D', 'gamma'), (-2.0, -0.5, 0.5), (0.5, 0.25, 0.25)), lr=lr,
-                maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=True, device=self.device
+                maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )
         return loss_hist, params_hist
 
@@ -308,7 +373,7 @@ class BayesianInference:
         if I_pred.ndim == 1:
             I_pred.unsqueeze_(1)
         I_pred_mean = torch.einsum("nt, n -> t", I_pred, particle_weights.to(I_pred))
-        loss = F.mse_loss(I_pred_mean, Y_true.to(I_pred_mean))
+        loss = F.mse_loss(I_pred_mean, torch.atleast_1d(Y_true).to(I_pred_mean))
         return loss.item()
 
     def step_Maximization(self, max_step=1, lr=1e-7, min_datapoints=1):
@@ -331,18 +396,20 @@ class BayesianInference:
                     I_pred = I_pred * scale_factor
                 if I_pred.ndim == 1:
                     I_pred.unsqueeze_(1)
-                I_pred_mean = torch.einsum("nt, n -> t", I_pred, particle_weights)
-                loss = F.mse_loss(I_pred_mean, Y_true.to(I_pred_mean))
+                I_pred_mean = torch.einsum("nt, n -> t", I_pred, particle_weights.to(I_pred))
+                loss = F.mse_loss(I_pred_mean, torch.atleast_1d(Y_true.to(I_pred_mean)))
                 particles_grad, particle_weights_grad = torch.autograd.grad(loss, (particles, particle_weights))
-                particles = particles - 1e-3 * particles_grad
-                _particle_weights = torch.relu(particle_weights - lr * particle_weights_grad)
-                if np.abs(_particle_weights.sum().item()) < 1e-3:
-                    break
-                else:
-                    particle_weights.requires_grad_(False)
-                    particle_weights.data[:] = (_particle_weights.clone() / _particle_weights.sum()).data
-                
-            self.obe_model.particle_weights = particle_weights.detach().cpu().numpy()
+                particles = particles - lr * particles_grad
+                # _particle_weights = torch.relu(particle_weights - lr * particle_weights_grad)
+                # if np.abs(_particle_weights.sum().item()) < 1e-3:
+                #     particle_weights.requires_grad_(False)
+                #     particle_weights = torch.ones_like(particle_weights) / particle_weights.shape[0]
+                #     particle_weights.data[:] = (_particle_weights.clone() / _particle_weights.sum()).data
+                # else:
+                #     particle_weights.requires_grad_(False)
+                #     particle_weights.data[:] = (_particle_weights.clone() / _particle_weights.sum()).data
+            self.obe_model.particles = particles.detach().cpu().numpy()
+            # self.obe_model.particle_weights = particle_weights.detach().cpu().numpy()
 
     def predict_all_settings(self, parameters=None):
         if parameters is None:
