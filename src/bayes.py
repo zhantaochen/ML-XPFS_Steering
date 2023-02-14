@@ -44,30 +44,38 @@ class BayesianInference:
         self.pulse_width = pulse_width
         self.model_uncertainty = model_uncertainty
 
-        if self.pulse_width is not None:
-            self.model_function = partial(self.model_function_conv, ret_tensor=False)
+        if device is None:
+            self.device = 'cuda' if torch.cuda.is_exist() else 'cpu'
         else:
-            self.model_function = partial(self.model_function_noconv, ret_tensor=False)
+            self.device = device
+
+        if self.pulse_width is not None:
+            self.model_function = partial(self.model_function_conv, ret_tensor=False, norm_I0=100, device=device)
+        else:
+            self.model_function = partial(self.model_function_noconv, ret_tensor=False, norm_I0=100, device=device)
         self.init_OptBayesExpt()
         self.init_saving_lists()
 
         self.reference_setting_value = reference_setting_value
 
-        if device is None:
-            self.device = 'cuda' if torch.cuda.is_exist() else 'cpu'
-        else:
-            self.device = device
 
     def init_OptBayesExpt(self, ):
         self.obe_model = OptBayesExpt_CustomCost(
             measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
             constants=self.constants, utility_method='variance_full',
             cost_repulse_height=0.25, cost_repulse_width=0.05)
-        
         # self.obe_model = OptBayesExpt_CustomCost(
         #     measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
         #     constants=self.constants, utility_method='variance_approx',
         #     cost_repulse_height=0.25, cost_repulse_width=0.05)
+        
+        # self.obe_model = obe.OptBayesExpt(
+        #     measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
+        #     constants=self.constants, utility_method='variance_full')
+        # self.obe_model = obe.OptBayesExpt(
+        #     measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
+        #     constants=self.constants, utility_method='variance_approx')
+        
         # self.obe_model = obe.OptBayesExpt(measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, constants=self.constants)
         
     def init_saving_lists(self, ):
@@ -101,7 +109,7 @@ class BayesianInference:
             D = array2tensor(D)[:,None]
         return t, J, D, gamma
 
-    def model_function_noconv(self, sets, pars, cons, ret_tensor=False):
+    def model_function_noconv(self, sets, pars, cons, ret_tensor=False, norm_I0=100):
         """ Evaluates a trusted model of the experiment's output
         The equivalent of a fit function. The argument structure is
         required by OptBayesExpt.
@@ -142,7 +150,7 @@ class BayesianInference:
                 t_extended.reshape(len(t),-1), dim=-1) / pulse_width
         return I_pred
 
-    def model_function_conv(self, sets, pars, cons, ret_tensor=False):
+    def model_function_conv(self, sets, pars, cons, ret_tensor=False, norm_I0=100, device='cpu'):
         """ Evaluates a trusted model of the experiment's output
         The equivalent of a fit function. The argument structure is
         required by OptBayesExpt.
@@ -153,7 +161,7 @@ class BayesianInference:
         Returns:  the evaluated function
         """
         # print(par_weights)
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # device = 'cuda' if torch.cuda.is_available() else 'cpu'
         # device = 'cpu'
         t, J, D, gamma = self.handle_inputs(sets, pars, device=device)
         
@@ -180,11 +188,15 @@ class BayesianInference:
         I_pred = self.get_I(t, y, gamma, 
                             torch.tensor(self.pulse_width).to(y).clone().detach(), 
                             torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
-
+        
+        I_pred_t0 = self.get_I(torch.tensor([0,]), y, gamma, 
+                            torch.tensor(self.pulse_width).to(y).clone().detach(), 
+                            torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
+        I_out = I_pred / I_pred_t0 * norm_I0
         if ret_tensor:
-            return I_pred.squeeze()
+            return I_out.squeeze()
         else:
-            return I_pred.detach().cpu().squeeze().numpy()
+            return I_out.detach().cpu().squeeze().numpy()
 
     def step_OptBayesExpt(self, func_measure):
         next_setting = self.obe_model.get_setting()
@@ -195,13 +207,14 @@ class BayesianInference:
         next_observable = func_measure.simdata(next_setting)
         
         measurement = (next_setting, next_observable, func_measure.noise_level)
-        if self.reference_setting_value is not None:
-            ref_setting, ref_value = self.reference_setting_value
-            ref_value_denum = self.obe_model.eval_over_all_parameters(ref_setting)[0].mean()
-            scale_factor = ref_value / ref_value_denum
-        else:
-            scale_factor = None
-        self.obe_model.pdf_update(measurement, scale_factor=scale_factor)
+        # if self.reference_setting_value is not None:
+        #     ref_setting, ref_value = self.reference_setting_value
+        #     ref_value_denum = self.obe_model.eval_over_all_parameters(ref_setting)[0].mean()
+        #     scale_factor = ref_value / ref_value_denum
+        # else:
+        #     scale_factor = None
+        # self.obe_model.pdf_update(measurement, scale_factor=scale_factor)
+        self.obe_model.pdf_update(measurement, scale_factor=None)
 
         self.measured_settings.append(next_setting)
         self.measured_observables.append(next_observable)
@@ -365,11 +378,11 @@ class BayesianInference:
         particle_weights = torch.from_numpy(self.obe_model.particle_weights)
         particles = torch.from_numpy(self.obe_model.particles)
         I_pred = self.model_function_conv((t,), particles, (), ret_tensor=True)
-        if self.reference_setting_value is not None:
-            ref_setting, ref_value = self.reference_setting_value
-            I0_pred = self.model_function_conv(ref_setting, particles, (), ret_tensor=True)
-            scale_factor = ref_value / I0_pred.mean()
-            I_pred = I_pred * scale_factor
+        # if self.reference_setting_value is not None:
+        #     ref_setting, ref_value = self.reference_setting_value
+        #     I0_pred = self.model_function_conv(ref_setting, particles, (), ret_tensor=True)
+        #     scale_factor = ref_value / I0_pred.mean()
+        #     I_pred = I_pred * scale_factor
         if I_pred.ndim == 1:
             I_pred.unsqueeze_(1)
         I_pred_mean = torch.einsum("nt, n -> t", I_pred, particle_weights.to(I_pred))
@@ -389,11 +402,11 @@ class BayesianInference:
                 particles.requires_grad_(True)
                 particle_weights.requires_grad_(True)
                 I_pred = self.model_function_conv((t,), particles, (), ret_tensor=True)
-                if self.reference_setting_value is not None:
-                    ref_setting, ref_value = self.reference_setting_value
-                    I0_pred = self.model_function_conv(ref_setting, particles, (), ret_tensor=True)
-                    scale_factor = ref_value / I0_pred.mean()
-                    I_pred = I_pred * scale_factor
+                # if self.reference_setting_value is not None:
+                #     ref_setting, ref_value = self.reference_setting_value
+                #     I0_pred = self.model_function_conv(ref_setting, particles, (), ret_tensor=True)
+                #     scale_factor = ref_value / I0_pred.mean()
+                #     I_pred = I_pred * scale_factor
                 if I_pred.ndim == 1:
                     I_pred.unsqueeze_(1)
                 I_pred_mean = torch.einsum("nt, n -> t", I_pred, particle_weights.to(I_pred))
