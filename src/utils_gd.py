@@ -31,6 +31,7 @@ def fit_measurement_with_OptBayesExpt_parameters(
     _type_
         _description_
     """
+    model.to(device)
     t = torch.atleast_1d(array2tensor(t)).to(device)
     S = torch.atleast_1d(array2tensor(S)).to(device)
 
