@@ -78,7 +78,7 @@ def updata_dict_for_idx(idx, d, X, Y, model,
     if TASK_NAME == 'gd':
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_w_GD(
             N_steps_bayes, obe_sim, N_GD=100, lr=0.005, ret_particles=True, verbose=False, 
-            gd_seperation=25, error_criterion=2*noise_level**2)
+            gd_seperation=25, error_criterion=1.5*noise_level**2)
     else:
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_wo_GD(
             N_steps_bayes, obe_sim, ret_particles=True, verbose=False)

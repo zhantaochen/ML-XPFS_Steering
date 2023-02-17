@@ -174,11 +174,11 @@ class BayesianInference:
         #         t_extended.reshape(len(t),-1), dim=-1) / self.pulse_width
 
         I_pred = get_I(t, y, gamma, 
-                        torch.tensor(self.pulse_width).to(y).clone().detach(), 
-                        torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
+                       torch.tensor(self.pulse_width).to(y).clone().detach(), 
+                       torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
         I_pred_t0 = get_I(torch.tensor([0,]), y, gamma, 
-                            torch.tensor(self.pulse_width).to(y).clone().detach(), 
-                            torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
+                          torch.tensor(self.pulse_width).to(y).clone().detach(), 
+                          torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
         I_out = I_pred / I_pred_t0 * norm_I0
         if ret_tensor:
             return I_out.squeeze()

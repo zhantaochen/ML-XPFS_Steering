@@ -10,22 +10,32 @@ from .utils_convolution import interp_nb, get_I_conv
 def get_I(t, y, gamma, pulse_width, meV_to_2piTHz):
     omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
     if pulse_width > 0.:
-        t_extended = [torch.linspace((_t-pulse_width/2).item(), (_t+pulse_width/2).item(), int(pulse_width/0.01)).to(y) for _t in t]
-        t_extended = torch.vstack(t_extended).flatten().to(y)
+        t = t.to(y)
+        ## method 1
+        step = 10
+        step_size = pulse_width / step
+        t_extended = torch.vstack([t - pulse_width/2 + n * step_size for n in range(step+1)]).T.flatten().to(y)
+        ## method 2
+        # t_extended = [torch.linspace((_t-pulse_width/2).item(), (_t+pulse_width/2).item(), int(pulse_width/0.01)).to(y) for _t in t]
+        # t_extended = [torch.linspace((_t-pulse_width/2).item(), (_t+pulse_width/2).item(), 11).to(y) for _t in t]
+        # t_extended = torch.vstack(t_extended).flatten().to(y)
+        ## method 3
+        # step = 11
+        # delta_t = torch.linspace(-pulse_width/2, pulse_width/2, step+1)
+        # t_extended = (t[:,None] + delta_t[None,:].to(t)).flatten()
+
         S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t_extended.abs().reshape(len(t),-1)))
         I_pred = torch.trapz(
             (jit_batch_spec_to_Sqt(
                 omega, inten, t_extended, meV_to_2piTHz
-                ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
+             ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
                 t_extended.reshape(len(t),-1), dim=-1) / pulse_width
     else:
-        # t = array2tensor(t)
         t = t.to(y)
-        # print(t.device, y.device, gamma.device, pulse_width.device, meV_to_2piTHz.device)
         S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t.abs().reshape(len(t),-1)))
         I_pred = (jit_batch_spec_to_Sqt(
                         omega, inten, t, meV_to_2piTHz
-                    ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2)
+                  ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2)
     return I_pred
 
 def prepare_sample(x, y, gamma, times, pulse_width=0.1, visualize=False, normalize_to_value=None):

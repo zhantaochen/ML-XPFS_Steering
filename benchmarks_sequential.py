@@ -20,7 +20,7 @@ import pickle
 
 # %%
 # from multiprocessing import Process, Manager, Pool
-from torch.multiprocessing import Pool, Manager, Process, set_start_method
+# from torch.multiprocessing import Pool, Manager, Process, set_start_method
 # set_start_method('spawn')
 from functools import partial
 from itertools import repeat
@@ -34,6 +34,12 @@ import warnings
 warnings.filterwarnings('ignore')
 
 torch.set_default_dtype(torch.float64)
+
+import argparse
+parser = argparse.ArgumentParser(description='Description of your program')
+parser.add_argument('-nl','--noise_level', help='Noise level, default=1.0', required=True, default=1.0)
+parser.add_argument('-pw','--pulse_width', help='Pulse width, default=0.0', required=True, default=0.0)
+args = vars(parser.parse_args())
 
 def measure_function(sets, pars, cons, func):
     """ Evaluates a trusted model of the experiment's output
@@ -60,8 +66,7 @@ def updata_dict_for_idx(idx, X, Y, model,
     # print(idx)
     d = {}
     param_true, func_I_conv, func_I_noconv = prepare_sample(
-            X[idx], Y[idx], gamma, times, pulse_width=pulse_width, 
-            visualize=True, normalize_to_value=normalize_to_value)
+            X[idx], Y[idx], gamma, times, pulse_width=pulse_width, normalize_to_value=normalize_to_value)
     obe_sim = obe.MeasurementSimulator(
         lambda s, p, c: measure_function(s, p, c, func_I_conv), param_true, (), noise_level=noise_level)
     
@@ -74,7 +79,7 @@ def updata_dict_for_idx(idx, X, Y, model,
     if TASK_NAME == 'gd':
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_w_GD(
             N_steps_bayes, obe_sim, N_GD=100, lr=0.005, ret_particles=True, verbose=False, 
-            gd_seperation=25, error_criterion=200)
+            gd_seperation=25, error_criterion=1.5*noise_level**2)
     else:
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_wo_GD(
             N_steps_bayes, obe_sim, ret_particles=True, verbose=False)
@@ -95,83 +100,81 @@ def updata_dict_for_idx(idx, X, Y, model,
     d['particle_weights'] = p_weights_hist
     return d
 
-#%%
-# if __name__ == '__main__':
+if __name__ == '__main__':
+    print(args)
+    # exit() 
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# device = 'cpu'
+    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
 
-import seaborn
-palette_crest = seaborn.color_palette(palette='crest')
-palette_flare = seaborn.color_palette(palette='flare')
+    import seaborn
+    palette_crest = seaborn.color_palette(palette='crest')
+    palette_flare = seaborn.color_palette(palette='flare')
 
-data = torch.load("data/CrI3/20221110.pt")
-X = data['param'][:,:2]
-Y = torch.cat((data['omega'], data['inten']), dim=1)
+    data = torch.load("data/CrI3/20221110.pt")
+    X = data['param'][:,:2]
+    Y = torch.cat((data['omega'], data['inten']), dim=1)
 
-indices_dict = torch.load("data_splitting/indices_42_800-100-100.pt")
-test_indices = indices_dict['test']
+    indices_dict = torch.load("data_splitting/indices_42_800-100-100.pt")
+    test_indices = indices_dict['test']
 
-X_test = X[test_indices]
-Y_test = Y[test_indices]
+    X_test = X[test_indices]
+    Y_test = Y[test_indices]
 
-print("print some values for further reference:")
-print("testing:\n", X_test[:5])
-model_spec = SpectrumPredictor.load_from_checkpoint("production_models/version_large_training_set/checkpoints/epoch=8456-step=422850.ckpt")
-from tqdm import tqdm
+    print("print some values for further reference:")
+    print("testing:\n", X_test[:5])
+    model_spec = SpectrumPredictor.load_from_checkpoint("production_models/version_large_training_set/checkpoints/epoch=8456-step=422850.ckpt")
+    from tqdm import tqdm
 
-RUN_NUMBERs = ['RUN_1', 'RUN_2', 'RUN_3', 'RUN_4', 'RUN_5']
-TASK_NAMEs = ['gd', 'baseline', 'random', 'sequential']
+    RUN_NUMBERs = ['RUN_1', 'RUN_2', 'RUN_3', 'RUN_4', 'RUN_5']
+    TASK_NAMEs = ['gd', 'baseline', 'random', 'sequential']
 
-gamma = 0.1
-pulse_width = 0.0
-noise_level = 1.0
-N_steps_bayes = 100
-normalize_to_value = 100
-NUM_SAMPLES = len(X_test)
-NUM_SAMPLES = 2
-NUM_WORKERS = 5
-print(f"task for pulse_width {pulse_width} and noise_level {noise_level} with {NUM_WORKERS} workers")
+    gamma = 0.1
+    pulse_width = float(args['pulse_width'])
+    noise_level = float(args['noise_level'])
+    N_steps_bayes = 100
+    normalize_to_value = 100
+    NUM_SAMPLES = len(X_test)
+    # NUM_SAMPLES = 2
+    NUM_WORKERS = 5
+    print(f"task for pulse_width {pulse_width} and noise_level {noise_level} with {NUM_WORKERS} workers")
 
-times = np.arange(0, 10, 0.02)
-parameters = (
-    np.random.uniform(-3.0, -1.0, 1001),
-    np.random.uniform(-1.0,  0.0, 1001),
-    np.random.uniform( 0.0,  1.0, 1001)
-    )
+    times = np.arange(0, 10, 0.02)
+    parameters = (
+        np.random.uniform(-3.0, -1.0, 1001),
+        np.random.uniform(-1.0,  0.0, 1001),
+        np.random.uniform( 0.0,  1.0, 1001)
+        )
 
-def perform_task(TASK_NAME, RUN_NUMBER):
+    def perform_task(TASK_NAME, RUN_NUMBER):
 
-    if TASK_NAME in ['baseline', 'gd']:
-        selection_method = 'optimal'
-        settings = (times, )
-    elif TASK_NAME == 'random':
-        selection_method = 'random'
-        settings = (times, )
-    elif TASK_NAME == 'sequential':
-        selection_method = 'sequential'
-        settings = (np.linspace(times.min(), times.max(), N_steps_bayes), )
+        if TASK_NAME in ['baseline', 'gd']:
+            selection_method = 'optimal'
+            settings = (times, )
+        elif TASK_NAME == 'random':
+            selection_method = 'random'
+            settings = (times, )
+        elif TASK_NAME == 'sequential':
+            selection_method = 'sequential'
+            settings = (np.linspace(times.min(), times.max(), N_steps_bayes), )
 
-    SAVE_NAME = f"bayesian_{TASK_NAME}_pw-{pulse_width}_nl-{noise_level}_Nb-{N_steps_bayes}"
-    print(f"SAVE_NAME is {SAVE_NAME}")
+        SAVE_NAME = f"bayesian_{TASK_NAME}_pw-{pulse_width}_nl-{noise_level}_Nb-{N_steps_bayes}"
+        print(f"SAVE_NAME is {SAVE_NAME}")
 
-    func = partial(updata_dict_for_idx, X=X_test, Y=Y_test,
-                model=model_spec, parameters=parameters, settings=settings, normalize_to_value=normalize_to_value, N_steps_bayes=N_steps_bayes,
-                times=times, gamma=gamma, pulse_width=pulse_width, noise_level=noise_level, selection_method=selection_method, TASK_NAME=TASK_NAME, device=device)
-    d = {}
-    for i_p in tqdm(range(NUM_SAMPLES), total=NUM_SAMPLES):
-        d[i_p] = func(i_p)
+        func = partial(updata_dict_for_idx, X=X_test, Y=Y_test,
+                    model=model_spec, parameters=parameters, settings=settings, normalize_to_value=normalize_to_value, N_steps_bayes=N_steps_bayes,
+                    times=times, gamma=gamma, pulse_width=pulse_width, noise_level=noise_level, selection_method=selection_method, TASK_NAME=TASK_NAME, device=device)
+        
+        d = {}
+        for i_p in tqdm(range(NUM_SAMPLES)):
+            d[i_p] = func(i_p)
 
-    SAVE_DIR = f'benchmarks/{RUN_NUMBER}'
-    if not os.path.exists(SAVE_DIR):
-        os.makedirs(SAVE_DIR)
-    with open(f'{SAVE_DIR}/{SAVE_NAME}.pkl', 'wb') as f:
-        pickle.dump(d, f)
+        SAVE_DIR = f'benchmarks/{RUN_NUMBER}'
+        if not os.path.exists(SAVE_DIR):
+            os.makedirs(SAVE_DIR)
+        with open(f'{SAVE_DIR}/{SAVE_NAME}.pkl', 'wb') as f:
+            pickle.dump(d, f)
 
-#%%
-
-for RUN_NUMBER in RUN_NUMBERs:
-    for TASK_NAME in TASK_NAMEs:
-        perform_task(TASK_NAME, RUN_NUMBER)
-
-
+    for RUN_NUMBER in RUN_NUMBERs:
+        for TASK_NAME in TASK_NAMEs:
+            perform_task(TASK_NAME, RUN_NUMBER)
