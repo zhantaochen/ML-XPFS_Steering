@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from .utils_model import construct_fc_net, array2tensor, tensor2array, batch_spec_to_Sqt, jit_batch_spec_to_Sqt
 from .utils_gd import fit_measurement_with_OptBayesExpt_parameters
+from .utils_general import get_I
 
 import scipy.constants as const
 meV_to_2piTHz = torch.tensor(2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0])
@@ -49,6 +50,7 @@ class BayesianInference:
         else:
             self.device = device
 
+        self.reference_setting_value = reference_setting_value
         if self.pulse_width is not None:
             self.model_function = partial(self.model_function_conv, ret_tensor=False, norm_I0=100, device=device)
         else:
@@ -56,7 +58,6 @@ class BayesianInference:
         self.init_OptBayesExpt()
         self.init_saving_lists()
 
-        self.reference_setting_value = reference_setting_value
 
 
     def init_OptBayesExpt(self, ):
@@ -136,19 +137,6 @@ class BayesianInference:
             return I_pred.squeeze()
         else:
             return I_pred.detach().cpu().squeeze().numpy()
-    
-    @torch.jit.script
-    def get_I(t, y, gamma, pulse_width, meV_to_2piTHz):
-        omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
-        t_extended = [torch.linspace(_t-pulse_width/2, _t+pulse_width/2, int(pulse_width/0.01)).to(y) for _t in t]
-        t_extended = torch.vstack(t_extended).flatten().to(y)
-        S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t_extended.abs().reshape(len(t),-1)))
-        I_pred = torch.trapz(
-            (jit_batch_spec_to_Sqt(
-                omega, inten, t_extended, meV_to_2piTHz
-                ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
-                t_extended.reshape(len(t),-1), dim=-1) / pulse_width
-        return I_pred
 
     def model_function_conv(self, sets, pars, cons, ret_tensor=False, norm_I0=100, device='cpu'):
         """ Evaluates a trusted model of the experiment's output
@@ -185,11 +173,10 @@ class BayesianInference:
         #         ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
         #         t_extended.reshape(len(t),-1), dim=-1) / self.pulse_width
 
-        I_pred = self.get_I(t, y, gamma, 
-                            torch.tensor(self.pulse_width).to(y).clone().detach(), 
-                            torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
-        
-        I_pred_t0 = self.get_I(torch.tensor([0,]), y, gamma, 
+        I_pred = get_I(t, y, gamma, 
+                        torch.tensor(self.pulse_width).to(y).clone().detach(), 
+                        torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
+        I_pred_t0 = get_I(torch.tensor([0,]), y, gamma, 
                             torch.tensor(self.pulse_width).to(y).clone().detach(), 
                             torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
         I_out = I_pred / I_pred_t0 * norm_I0
@@ -264,7 +251,10 @@ class BayesianInference:
         else:
             pbar = range(N)
         for i in pbar:
-            self.step_OptBayesExpt(func_measure)
+            try:
+                self.step_OptBayesExpt(func_measure)
+            except LinAlgError:
+                pass
             current_error = self.estimate_error()
             if ret_particles:
                 particles.append(self.obe_model.particles.copy())
@@ -289,13 +279,7 @@ class BayesianInference:
             try:
                 self.step_OptBayesExpt(func_measure)
             except LinAlgError:
-                if verbose:
-                    print(f"running GD at step {i}, current error {current_error}")
-                loss_hist, param_hist = self.run_gradient_desc_on_current_measurements(
-                    N_GD, lr=lr, batch_size=self.obe_model.n_particles, init_bayes_guess=False)
-                particles_to_update = tensor2array(torch.cat([param_hist[key][-1].unsqueeze(0) for key in param_hist.keys()], dim=0))
-                self.update_OptBayesExpt_particles(particles_to_update)
-                last_gd_step = i
+                pass
 
             current_error = self.estimate_error()
             if current_error > error_criterion and self.obe_model.std().mean() < 1e-2:
@@ -354,8 +338,9 @@ class BayesianInference:
             #     maxiter=N, batch_size=batch_size
             # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
-                self.forward_model, t, S, (('J', 'D', 'gamma'), self.obe_model.mean(), self.obe_model.std()), lr=lr,
-                maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
+                self.forward_model, t, S, (('J', 'D', 'gamma'), self.obe_model.mean(), self.obe_model.std()), 
+                pulse_width=self.pulse_width, norm_I0=100,
+                lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )
         else:
             # loss_hist, params_hist = self.forward_model.fit_measurement_with_OptBayesExpt_parameters(
@@ -363,8 +348,9 @@ class BayesianInference:
             #     maxiter=N, batch_size=batch_size
             # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
-                self.forward_model, t, S, (('J', 'D', 'gamma'), (-2.0, -0.5, 0.5), (0.5, 0.25, 0.25)), lr=lr,
-                maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
+                self.forward_model, t, S, (('J', 'D', 'gamma'), (-2.0, -0.5, 0.5), (np.sqrt(1/3), np.sqrt(1/12), np.sqrt(1/12))), 
+                pulse_width=self.pulse_width, norm_I0=100, 
+                lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )
         return loss_hist, params_hist
 

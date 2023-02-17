@@ -33,6 +33,14 @@ from src.bayes import BayesianInference, jit_batch_spec_to_Sqt
 import warnings
 warnings.filterwarnings('ignore')
 
+torch.set_default_dtype(torch.float64)
+
+import argparse
+parser = argparse.ArgumentParser(description='Description of your program')
+parser.add_argument('-nl','--noise_level', help='Noise level, default=1.0', required=True, default=1.0)
+parser.add_argument('-pw','--pulse_width', help='Pulse width, default=0.0', required=True, default=0.0)
+args = vars(parser.parse_args())
+
 def measure_function(sets, pars, cons, func):
     """ Evaluates a trusted model of the experiment's output
     The equivalent of a fit function. The argument structure is
@@ -69,8 +77,8 @@ def updata_dict_for_idx(idx, d, X, Y, model,
 
     if TASK_NAME == 'gd':
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_w_GD(
-            N_steps_bayes, obe_sim, N_GD=200, lr=1e-3, ret_particles=True, verbose=False, 
-            gd_seperation=35, error_criterion=150)
+            N_steps_bayes, obe_sim, N_GD=100, lr=0.005, ret_particles=True, verbose=False, 
+            gd_seperation=25, error_criterion=2*noise_level**2)
     else:
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_wo_GD(
             N_steps_bayes, obe_sim, ret_particles=True, verbose=False)
@@ -93,9 +101,11 @@ def updata_dict_for_idx(idx, d, X, Y, model,
 
 if __name__ == '__main__':
     set_start_method('spawn')
+    print(args)
+    # exit() 
 
-    torch.set_default_dtype(torch.float64)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
 
     import seaborn
     palette_crest = seaborn.color_palette(palette='crest')
@@ -112,59 +122,23 @@ if __name__ == '__main__':
     Y_test = Y[test_indices]
 
     print("print some values for further reference:")
-    # print("training:\n", X_train[:5])
-    # print("validation:\n", X_val[:5])
     print("testing:\n", X_test[:5])
-
-    # %%
     model_spec = SpectrumPredictor.load_from_checkpoint("production_models/version_large_training_set/checkpoints/epoch=8456-step=422850.ckpt")
-
-    # loss_test = []
-    # Y_test_pred = []
-    # with torch.no_grad():
-    #     for x_test, y_test in zip(X_test, Y_test):
-    #         y_test_pred = model_spec(x_test).detach()
-    #         loss_test.append((y_test_pred - y_test).abs().mean().item())
-    #         Y_test_pred.append(y_test_pred)
-    # Y_test_pred = torch.vstack(Y_test_pred)
-
-    # labels = [r'$\omega_1$', r'$\omega_2$', r'$S(\vec{q},\omega_{1})$', r'$S(\vec{q},\omega_{2})$']
-
-    # fig = plt.figure(figsize=(5,5))
-    # gs = plt.GridSpec(2,2)
-    # for i in range(4):
-    #     ax = fig.add_subplot(gs[i])
-    #     ax.plot([-100,100], [-100,100], 'k', linewidth=0.5, zorder=0)
-    #     ax.scatter(Y_test[:,i], Y_test_pred[:,i], s=5, color="#207A9A", zorder=10)
-    #     ax.set_aspect('equal')
-    #     ax.set_xlim([-0.1*Y_test[:,i].max(), 1.1*Y_test[:,i].max()])
-    #     ax.set_ylim([-0.1*Y_test[:,i].max(), 1.1*Y_test[:,i].max()])
-    #     ax.set_xlabel(f"True {labels[i]}", fontsize=12)
-    #     ax.set_ylabel(f"Predicted {labels[i]}", fontsize=12)
-
-    # fig.tight_layout()
-    # fig.savefig("figs/paper/network_hist2d.pdf", bbox_inches='tight')
-
-
-    # %%
-
-
-    # %%
     from tqdm import tqdm
 
     RUN_NUMBERs = ['RUN_1', 'RUN_2', 'RUN_3', 'RUN_4', 'RUN_5']
     TASK_NAMEs = ['gd', 'baseline', 'random', 'sequential']
 
     gamma = 0.1
-    pulse_width = 0.2
-    noise_level = 10.0
-    N_steps_bayes = 200
+    pulse_width = float(args['pulse_width'])
+    noise_level = float(args['noise_level'])
+    N_steps_bayes = 100
     normalize_to_value = 100
     NUM_SAMPLES = len(X_test)
-    NUM_WORKERS = int(os.cpu_count() * 2 / 3)
+    # NUM_SAMPLES = 2
+    NUM_WORKERS = 5
     print(f"task for pulse_width {pulse_width} and noise_level {noise_level} with {NUM_WORKERS} workers")
 
-    # %%
     times = np.arange(0, 10, 0.02)
     parameters = (
         np.random.uniform(-3.0, -1.0, 1001),
@@ -172,7 +146,6 @@ if __name__ == '__main__':
         np.random.uniform( 0.0,  1.0, 1001)
         )
 
-    # %%
     def perform_task(TASK_NAME, RUN_NUMBER):
 
         if TASK_NAME in ['baseline', 'gd']:
@@ -210,5 +183,3 @@ if __name__ == '__main__':
     for RUN_NUMBER in RUN_NUMBERs:
         for TASK_NAME in TASK_NAMEs:
             perform_task(TASK_NAME, RUN_NUMBER)
-
-

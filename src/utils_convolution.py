@@ -7,8 +7,11 @@ def interp_nb(t, tp, Sp):
 
 @njit
 def get_I_conv_at_t(t, tp, Sp, pulse_width):
-    t_around = np.linspace(t-pulse_width/2, t+pulse_width/2, int(pulse_width/0.01))
-    I_out = np.trapz(np.abs(interp_nb(t_around, tp, Sp))**2, t_around) / pulse_width
+    if pulse_width > 0.0:
+        t_around = np.linspace(t-pulse_width/2, t+pulse_width/2, int(pulse_width/0.01))
+        I_out = np.trapz(np.abs(interp_nb(t_around, tp, Sp))**2, t_around) / pulse_width
+    else:
+        I_out = np.abs(interp_nb(t, tp, Sp))**2
     return I_out
 
 @njit(parallel=True)
