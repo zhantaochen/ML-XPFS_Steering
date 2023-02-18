@@ -104,8 +104,8 @@ if __name__ == '__main__':
     print(args)
     # exit() 
 
-    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device = 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cpu'
 
     import seaborn
     palette_crest = seaborn.color_palette(palette='crest')
@@ -126,7 +126,7 @@ if __name__ == '__main__':
     model_spec = SpectrumPredictor.load_from_checkpoint("production_models/version_large_training_set/checkpoints/epoch=8456-step=422850.ckpt")
     from tqdm import tqdm
 
-    RUN_NUMBERs = ['RUN_1', 'RUN_2', 'RUN_3', 'RUN_4', 'RUN_5']
+    RUN_NUMBERs = [f'RUN_{i+1}' for i in range(5)]
     TASK_NAMEs = ['gd', 'baseline', 'random', 'sequential']
 
     gamma = 0.1
@@ -135,9 +135,7 @@ if __name__ == '__main__':
     N_steps_bayes = 100
     normalize_to_value = 100
     NUM_SAMPLES = len(X_test)
-    # NUM_SAMPLES = 2
-    NUM_WORKERS = 5
-    print(f"task for pulse_width {pulse_width} and noise_level {noise_level} with {NUM_WORKERS} workers")
+    print(f"task for pulse_width {pulse_width} and noise_level {noise_level} for {NUM_SAMPLES} samples.")
 
     times = np.arange(0, 10, 0.02)
     parameters = (
