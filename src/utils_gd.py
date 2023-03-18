@@ -29,7 +29,7 @@ def get_I_from_params(model, t, parameters, pulse_width, norm_I0=100, model_unce
 def fit_measurement_with_OptBayesExpt_parameters(
     model, t, S, params, pulse_width, norm_I0=100,
     batch_size=10, maxiter=100, lr=0.001,
-    params_type='mean_std', save_param_hist=True, verbose=False, model_uncertainty=False, device='cpu'
+    params_type='mean_std_normal', save_param_hist=True, verbose=False, model_uncertainty=False, device='cpu'
 ):
     """_summary_
 
@@ -58,11 +58,13 @@ def fit_measurement_with_OptBayesExpt_parameters(
     S = torch.atleast_1d(array2tensor(S)).to(device)
 
     parameters = torch.nn.ParameterDict()
-    for (name, mean, std) in zip(*params):
-        if params_type == 'mean_std':
-            parameters[name] = (mean + std*torch.randn(batch_size,1)).requires_grad_(True)
+    for (name, a, b) in zip(*params):
+        if params_type == 'mean_std_normal':
+            parameters[name] = (a + b*torch.randn(batch_size,1)).requires_grad_(True)
+        elif params_type == 'min_max_uniform':
+            parameters[name] = (a + (b-a)*torch.rand(batch_size,1)).requires_grad_(True)
         elif params_type == 'particles':
-            parameters[name] = array2tensor(mean).requires_grad_(True)
+            parameters[name] = array2tensor(a).unsqueeze(1).requires_grad_(True)
     parameters = parameters.to(device)
     param_lst = []
     for name in params[0]:

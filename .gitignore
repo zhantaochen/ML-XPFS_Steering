@@ -3,5 +3,9 @@ training_logs
 production_models
 *.pyc
 figs
+figs_oldver
+figures
 benchmarks
+benchmarks_2023Feb19
+benchmarks_2023Feb20
 benchmarks_backup

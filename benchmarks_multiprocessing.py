@@ -78,7 +78,7 @@ def updata_dict_for_idx(idx, d, X, Y, model,
     if TASK_NAME == 'gd':
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_w_GD(
             N_steps_bayes, obe_sim, N_GD=100, lr=0.005, ret_particles=True, verbose=False, 
-            gd_seperation=25, error_criterion=1.5*noise_level**2)
+            gd_seperation=17, error_criterion=1.25*noise_level**2)
     else:
         particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_wo_GD(
             N_steps_bayes, obe_sim, ret_particles=True, verbose=False)
@@ -132,14 +132,14 @@ if __name__ == '__main__':
     gamma = 0.1
     pulse_width = float(args['pulse_width'])
     noise_level = float(args['noise_level'])
-    N_steps_bayes = 100
+    N_steps_bayes = 50
     normalize_to_value = 100
     NUM_SAMPLES = len(X_test)
     # NUM_SAMPLES = 2
     NUM_WORKERS = 5
     print(f"task for pulse_width {pulse_width} and noise_level {noise_level} with {NUM_WORKERS} workers")
 
-    times = np.arange(0, 10, 0.02)
+    times = np.linspace(0, 10, 501)
     parameters = (
         np.random.uniform(-3.0, -1.0, 1001),
         np.random.uniform(-1.0,  0.0, 1001),
