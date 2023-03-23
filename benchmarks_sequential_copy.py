@@ -163,23 +163,23 @@ if __name__ == '__main__':
 
         SAVE_NAME = f"bayesian_{TASK_NAME}_pw-{pulse_width}_nl-{noise_level}_Nb-{N_steps_bayes}"
         print(f"SAVE_NAME is {SAVE_NAME}")
-        SAVE_DIR = f'benchmarks/{RUN_NUMBER}'
-        if not os.path.exists(SAVE_DIR):
-            os.makedirs(SAVE_DIR)
-        if os.path.isfile(f'{SAVE_DIR}/{SAVE_NAME}.pkl'):
-            print(f'{SAVE_DIR}/{SAVE_NAME}.pkl already exists, skipped this case.')
-            return
+        # SAVE_DIR = f'benchmarks/{RUN_NUMBER}'
+        # if not os.path.exists(SAVE_DIR):
+        #     os.makedirs(SAVE_DIR)
+        # if os.path.isfile(f'{SAVE_DIR}/{SAVE_NAME}.pkl'):
+        #     print(f'{SAVE_DIR}/{SAVE_NAME}.pkl already exists, skipped this case.')
+        #     return
 
-        func = partial(update_dict_for_idx, X=X_test, Y=Y_test,
-                    model=model_spec, parameters=parameters, settings=settings, normalize_to_value=normalize_to_value, N_steps_bayes=N_steps_bayes,
-                    times=times, gamma=gamma, pulse_width=pulse_width, noise_level=noise_level, selection_method=selection_method, TASK_NAME=TASK_NAME, device=device)
+        # func = partial(update_dict_for_idx, X=X_test, Y=Y_test,
+        #             model=model_spec, parameters=parameters, settings=settings, normalize_to_value=normalize_to_value, N_steps_bayes=N_steps_bayes,
+        #             times=times, gamma=gamma, pulse_width=pulse_width, noise_level=noise_level, selection_method=selection_method, TASK_NAME=TASK_NAME, device=device)
         
-        d = {}
-        for i_p in tqdm(range(NUM_SAMPLES)):
-            d[i_p] = func(i_p)
+        # d = {}
+        # for i_p in tqdm(range(NUM_SAMPLES)):
+        #     d[i_p] = func(i_p)
 
-        with open(f'{SAVE_DIR}/{SAVE_NAME}.pkl', 'wb') as f:
-            pickle.dump(d, f)
+        # with open(f'{SAVE_DIR}/{SAVE_NAME}.pkl', 'wb') as f:
+        #     pickle.dump(d, f)
 
     for RUN_NUMBER in RUN_NUMBERs:
         for TASK_NAME in TASK_NAMEs:

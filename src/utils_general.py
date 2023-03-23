@@ -7,7 +7,8 @@ from .utils_model import jit_batch_spec_to_Sqt, array2tensor, tensor2array
 from .utils_convolution import interp_nb, get_I_conv
 
 @torch.jit.script
-def get_I(t, y, gamma, pulse_width, meV_to_2piTHz, elas_amp=torch.tensor([0.0]), elas_wid=torch.tensor([1.0])):
+def get_I(t, y, gamma, pulse_width, meV_to_2piTHz, 
+          elas_amp=torch.tensor([0.0]), elas_wid=torch.tensor([1.0])):
     n_particles = gamma.shape[0]
     t = t.to(y)
     elas_amp = torch.atleast_2d(elas_amp).to(y)
@@ -19,7 +20,7 @@ def get_I(t, y, gamma, pulse_width, meV_to_2piTHz, elas_amp=torch.tensor([0.0]),
     
     omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
     omega_full = torch.arange(0, 25, 0.5).to(y).unsqueeze(0).repeat_interleave(n_particles, dim=0)
-    inten_elas = (elas_amp * inten.max() * torch.exp(-omega_full.pow(2)/(2 * elas_wid**2))).to(y)
+    inten_elas = (elas_amp * torch.exp(-omega_full.pow(2)/(2 * elas_wid**2))).to(y)
     # Sqt_bkg = jit_batch_spec_to_Sqt(omega_full, inten_elas, t, meV_to_2piTHz).sum(dim=1).squeeze()
 
     if pulse_width > 0.:
@@ -61,14 +62,13 @@ def get_I(t, y, gamma, pulse_width, meV_to_2piTHz, elas_amp=torch.tensor([0.0]),
 
 def prepare_sample(x, y, gamma, times, 
                    pulse_width=0.1, normalize_to_value=None,
-                   elas_amp_factor=0., elas_wid=1.0, visualize=False):
+                   elas_amp_factor=0., elas_wid=1.0, elas_amp_abs_max=None, visualize=False):
 
     # prepare Sqt energies and intensities
     omega_test, inten_test = torch.split(y, y.shape[0]//2)
     omega_full = torch.arange(0, omega_test.max() + 5 + 10 * gamma, 0.01)
     _omega_full = omega_full[None].repeat_interleave(len(omega_test), dim=0)
     inten_full = (torch.abs(inten_test)[:,None] * gamma**2 / (gamma**2 + (_omega_full - omega_test[:,None])**2)).sum(dim=0)
-    true_pars = x.cpu().numpy().tolist() + [gamma,]
 
     # setup time for Sqt computation
     dt = times[1]-times[0]
@@ -76,8 +76,12 @@ def prepare_sample(x, y, gamma, times,
     times_extended_tensor = torch.from_numpy(times_extended)
 
     # prepare elastic scattering intensities
-    inten_elas = elas_amp_factor * inten_test.max() * \
-        torch.exp(-omega_full.pow(2)/(2 * elas_wid**2))
+    if elas_amp_abs_max is not None:
+        elas_amp = min(elas_amp_factor * inten_test.max(), elas_amp_abs_max)
+    else:
+        elas_amp = elas_amp_factor * inten_test.max()
+    true_pars = x.cpu().numpy().tolist() + [gamma, elas_amp, elas_wid]
+    inten_elas = elas_amp * torch.exp(-omega_full.pow(2)/(2 * elas_wid**2))
     Sqt_bkg = jit_batch_spec_to_Sqt(
         omega_full, inten_elas, times_extended_tensor).sum(dim=1).squeeze()
 

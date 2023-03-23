@@ -121,7 +121,7 @@ class BayesianInference:
 
     def handle_inputs(self, sets, pars, cons=None, device='cpu'):
         t, = sets
-        J, D, gamma = pars
+        J, D, gamma, elas_amp, elas_wid = pars
         if isinstance(t, (int, float)):
             t = torch.tensor([t,])
         else:
@@ -134,13 +134,25 @@ class BayesianInference:
             gamma = array2tensor(gamma)[:,None]
         gamma = gamma.to(device)
 
+        if isinstance(elas_amp, (int, float)):
+            elas_amp = torch.atleast_2d(torch.tensor([elas_amp]))
+        else:
+            elas_amp = array2tensor(elas_amp)[:,None]
+        elas_amp = elas_amp.to(device)
+        
+        if isinstance(elas_wid, (int, float)):
+            elas_wid = torch.atleast_2d(torch.tensor([elas_wid]))
+        else:
+            elas_wid = array2tensor(elas_wid)[:,None]
+        elas_wid = elas_wid.to(device)
+
         if isinstance(J, (int, float)):
             J = torch.tensor([[J]])
             D = torch.tensor([[D]])
         else:
             J = array2tensor(J)[:,None]
             D = array2tensor(D)[:,None]
-        return t, J, D, gamma
+        return t, J, D, gamma, elas_amp, elas_wid
 
     def model_function_noconv(self, sets, pars, cons, ret_tensor=False, norm_I0=100):
         """ Evaluates a trusted model of the experiment's output
@@ -183,7 +195,7 @@ class BayesianInference:
         # print(par_weights)
         # device = 'cuda' if torch.cuda.is_available() else 'cpu'
         # device = 'cpu'
-        t, J, D, gamma = self.handle_inputs(sets, pars, device=device)
+        t, J, D, gamma, elas_amp, elas_wid = self.handle_inputs(sets, pars, device=device)
         
         if not self.model_uncertainty:
             self.forward_model.to(device)
@@ -207,10 +219,12 @@ class BayesianInference:
 
         I_pred = get_I(t, y, gamma, 
                        torch.tensor(self.pulse_width).to(y).clone().detach(), 
-                       torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
+                       torch.tensor(self.meV_to_2piTHz).to(y).clone().detach(),
+                       elas_amp=elas_amp, elas_wid=elas_wid)
         I_pred_t0 = get_I(torch.tensor([0,]), y, gamma, 
                           torch.tensor(self.pulse_width).to(y).clone().detach(), 
-                          torch.tensor(self.meV_to_2piTHz).to(y).clone().detach())
+                          torch.tensor(self.meV_to_2piTHz).to(y).clone().detach(),
+                          elas_amp=elas_amp, elas_wid=elas_wid)
         I_out = I_pred / I_pred_t0 * norm_I0
         if ret_tensor:
             return I_out.squeeze()
@@ -376,7 +390,7 @@ class BayesianInference:
             #     maxiter=N, batch_size=batch_size
             # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
-                self.forward_model, t, S, (('J', 'D', 'gamma'), torch.from_numpy(self.obe_model.particles), (None,)*3), 
+                self.forward_model, t, S, (('J', 'D', 'gamma', 'elas_amp', 'elas_wid'), torch.from_numpy(self.obe_model.particles), (None,)*5), 
                 pulse_width=self.pulse_width, norm_I0=100, params_type = 'particles',
                 lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )
@@ -391,7 +405,7 @@ class BayesianInference:
             #     lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
-                self.forward_model, t, S, (('J', 'D', 'gamma'), torch.from_numpy(np.vstack(self.parameters)), (None,)*3), 
+                self.forward_model, t, S, (('J', 'D', 'gamma', 'elas_amp', 'elas_wid'), torch.from_numpy(np.vstack(self.parameters)), (None,)*5), 
                 pulse_width=self.pulse_width, norm_I0=100, params_type='particles',
                 lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )

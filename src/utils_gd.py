@@ -98,8 +98,8 @@ def fit_measurement_with_OptBayesExpt_parameters(
         # S_pred = S_pred / S_pred[:,0,None] * S[0]
         pulse_width = torch.tensor(pulse_width).to(y).clone().detach()
         meV_to_2piTHz = torch.tensor(2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0])
-        I_pred = get_I(t, y, parameters.gamma, pulse_width, meV_to_2piTHz)
-        I_pred_t0 = get_I(torch.tensor([0,]), y, parameters.gamma, pulse_width, meV_to_2piTHz)
+        I_pred = get_I(t, y, parameters.gamma, pulse_width, meV_to_2piTHz, parameters.elas_amp, parameters.elas_wid)
+        I_pred_t0 = get_I(torch.tensor([0,]), y, parameters.gamma, pulse_width, meV_to_2piTHz, parameters.elas_amp, parameters.elas_wid)
         I_out = I_pred / I_pred_t0 * norm_I0
 
         loss_batch = (I_out.squeeze() - torch.atleast_2d(S).repeat_interleave(batch_size,dim=0).to(I_out)).pow(2).mean(dim=1)
