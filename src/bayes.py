@@ -61,7 +61,7 @@ class BayesianInference:
         self, forward_model, settings=(), parameters=(), constants=(), 
         pulse_width=None, reference_setting_value=None, model_uncertainty=False, 
         parameter_mins=(0,0,0), parameter_maxs=(1,1,1),
-        cost_repulse_height=1.0, cost_repulse_width=0.25, device='cpu'
+        cost_repulse_height=1.0, cost_repulse_width=0.25, selection_method='optimal', device='cpu'
     ):
         # super().__init__()
         # self.register_module('forward_model', model)
@@ -75,6 +75,7 @@ class BayesianInference:
         self.cost_repulse_width = cost_repulse_width
         self.parameter_mins = parameter_mins
         self.parameter_maxs = parameter_maxs
+        self.selection_method = selection_method
 
         if device is None:
             self.device = 'cuda' if torch.cuda.is_exist() else 'cpu'
@@ -97,6 +98,7 @@ class BayesianInference:
             constants=self.constants, utility_method='variance_full',
             cost_repulse_height=self.cost_repulse_height, cost_repulse_width=self.cost_repulse_width,
             parameter_mins=self.parameter_mins, parameter_maxs=self.parameter_maxs)
+        self.obe_model.set_selection_method(self.selection_method)
         # self.obe_model = OptBayesExpt_CustomCost(
         #     measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
         #     constants=self.constants, utility_method='variance_approx',
@@ -231,59 +233,37 @@ class BayesianInference:
         else:
             return I_out.detach().cpu().squeeze().numpy()
 
-    def step_OptBayesExpt(self, func_measure):
-        next_setting = self.obe_model.get_setting()
-        if self.obe_model.selection_method in ['optimal', 'good']:
+    def step_OptBayesExpt(self, func_measure, noise_mode=None):
+        if self.selection_method == 'unique_optimal':
+            next_setting = self.obe_model.get_setting(self.measured_settings)
+        else:
+            next_setting = self.obe_model.get_setting()
+        # if len(self.measured_settings) >= 2:
+        #     min_dist = np.abs(np.asarray(next_setting) - np.asarray(self.measured_settings)).min()
+        #     if min_dist <= 0.01:
+        #         print("similar measurements detected, choosing a random one instead")
+        #         next_setting = self.obe_model.random_setting()
+        if self.obe_model.selection_method in ['optimal', 'good', 'unique_optimal']:
             self.utility_list.append(self.obe_model.utility_stored)
         else:
             self.utility_list.append(None)
         next_observable = func_measure.simdata(next_setting)
-        
-        measurement = (next_setting, next_observable, func_measure.noise_level)
-        # if self.reference_setting_value is not None:
-        #     ref_setting, ref_value = self.reference_setting_value
-        #     ref_value_denum = self.obe_model.eval_over_all_parameters(ref_setting)[0].mean()
-        #     scale_factor = ref_value / ref_value_denum
-        # else:
-        #     scale_factor = None
-        # self.obe_model.pdf_update(measurement, scale_factor=scale_factor)
+
+        if noise_mode is None:
+            noise_mode = func_measure.noise_mode
+        if noise_mode == 'gaussian':
+            measurement = (next_setting, next_observable, func_measure.noise_level)
+        elif noise_mode == 'poisson':
+            # measurement = (next_setting, next_observable, func_measure.noise_level)
+            measurement = (next_setting, next_observable, np.sqrt(func_measure.noise_level * max(next_observable, np.array(1.))))
         self.obe_model.pdf_update(measurement, scale_factor=None)
 
         self.measured_settings.append(next_setting)
         self.measured_observables.append(next_observable)
         self.param_mean.append(self.obe_model.mean())
         self.param_std.append(self.obe_model.std())
-        # pars = [np.random.normal(self.obe_model.mean()[i], self.obe_model.std()[i], num_samples_per_step) for i in range(len(self.obe_model.mean()))]
         _, model_predictions_on_obe_mean = self.predict_all_settings()
         self.model_predictions_on_obe_mean.append(model_predictions_on_obe_mean)
-            # if np.all(param_std[-1] < 1e-2):
-            #     break
-
-    # def run_N_steps_OptBayesExpt(
-    #     self, N, func_measure, 
-    #     steps_on_maximization=None, ret_particles=False, verbose=False):
-    #     if ret_particles:
-    #         particles = [self.obe_model.particles.copy()]
-    #         particle_weights = [self.obe_model.particle_weights.copy()]
-    #     if verbose:
-    #         print(f"using the {self.obe_model.selection_method} setting")
-    #         pbar = tqdm(range(N), desc="Running OptBayesExpt")
-    #     else:
-    #         pbar = range(N)
-    #     for i in pbar:
-    #         self.step_OptBayesExpt(func_measure)
-    #         if steps_on_maximization is not None:
-    #             # _, _ = self.run_gradient_desc_on_current_measurements(
-    #             #     steps_on_maximization, lr=0.001, init_bayes_guess=True, batch_size=self.obe_model.particles.shape[1])
-    #             # self.update_OptBayesExpt_particles(update_weights=False)
-    #             # print('updated')
-    #             for j in range(steps_on_maximization):
-    #                 self.step_Maximization()
-    #         if ret_particles:
-    #             particles.append(self.obe_model.particles.copy())
-    #             particle_weights.append(self.obe_model.particle_weights.copy())
-    #     if ret_particles:
-    #         return np.asarray(particles), np.asarray(particle_weights)
     
     def run_N_steps_OptBayesExpt_wo_GD(
         self, N, func_measure, ret_particles=False, verbose=False):
@@ -291,6 +271,7 @@ class BayesianInference:
             particles = [self.obe_model.particles.copy()]
             particle_weights = [self.obe_model.particle_weights.copy()]
             errors = []
+            likyhd = []
         if verbose:
             print(f"using the {self.obe_model.selection_method} setting")
             pbar = tqdm(range(N), desc="Running OptBayesExpt")
@@ -306,8 +287,9 @@ class BayesianInference:
                 particles.append(self.obe_model.particles.copy())
                 particle_weights.append(self.obe_model.particle_weights.copy())
                 errors.append(current_error)
+                likyhd.append(self.obe_model.curr_likyhd)
         if ret_particles:
-            return np.asarray(particles), np.asarray(particle_weights), errors
+            return np.asarray(particles), np.asarray(particle_weights), errors, np.asarray(likyhd)
 
     def run_N_steps_OptBayesExpt_w_GD(
         self, N, func_measure, run_GD=True, N_GD=100, lr=1e-2, gd_seperation=20, error_criterion=50, 
@@ -316,6 +298,7 @@ class BayesianInference:
             particles = [self.obe_model.particles.copy()]
             particle_weights = [self.obe_model.particle_weights.copy()]
             errors = []
+            likyhd = []
         if verbose:
             print(f"using the {self.obe_model.selection_method} setting")
             pbar = tqdm(range(N), desc="Running OptBayesExpt")
@@ -356,8 +339,9 @@ class BayesianInference:
                 particles.append(self.obe_model.particles.copy())
                 particle_weights.append(self.obe_model.particle_weights.copy())
                 errors.append(current_error)
+                likyhd.append(self.obe_model.curr_likyhd)
         if ret_particles:
-            return np.asarray(particles), np.asarray(particle_weights), errors
+            return np.asarray(particles), np.asarray(particle_weights), errors, np.asarray(likyhd)
 
     def get_all_measurements(self,):
         settings = np.asarray(self.measured_settings)

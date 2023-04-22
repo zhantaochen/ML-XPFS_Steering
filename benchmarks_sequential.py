@@ -69,38 +69,42 @@ def update_dict_for_idx(idx, X, Y, model,
             X[idx], Y[idx], gamma, times, pulse_width=pulse_width, normalize_to_value=normalize_to_value, 
             elas_amp_factor=float(np.random.normal(0.5, 1/6, 1).clip(0.0, 1.0)), elas_wid=float(np.random.normal(1., 1/3, 1).clip(0.1, 2.0)), elas_amp_abs_max=10.)
     obe_sim = obe.MeasurementSimulator(
-        lambda s, p, c: measure_function(s, p, c, func_I_conv), param_true, (), noise_level=noise_level, mode='poisson')
+        lambda s, p, c: measure_function(s, p, c, func_I_conv), param_true, (), noise_level=noise_level, noise_mode='poisson')
     
     bayes = BayesianInference(
         model, settings, parameters,
         pulse_width=pulse_width, reference_setting_value=((0,), normalize_to_value),
-        cost_repulse_height=1.0, cost_repulse_width=0.5,
-        parameter_mins=(-3., -1., 0., 0., 0.1), parameter_maxs=(-1., 0., 1., 10., 2.),
+        cost_repulse_height=10.0, cost_repulse_width=0.25,
+        parameter_mins=(-3., -1., 0., 0., 0.1), parameter_maxs=(-1., 0., 1., 10., 2.), selection_method=selection_method,
         model_uncertainty=False, device=device)
     bayes.obe_model.set_selection_method(selection_method)
 
     if TASK_NAME == 'gd':
-        particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_w_GD(
+        particles_hist, p_weights_hist, errors, likyhd_hist = bayes.run_N_steps_OptBayesExpt_w_GD(
             N_steps_bayes, obe_sim, N_GD=100, lr=0.1, ret_particles=True, verbose=False, init_bayes_guess=True,
-            gd_seperation=14, error_criterion=1.5*noise_level**2)
+            gd_seperation=14, error_criterion=25)
     else:
-        particles_hist, p_weights_hist, errors = bayes.run_N_steps_OptBayesExpt_wo_GD(
+        particles_hist, p_weights_hist, errors, likyhd_hist = bayes.run_N_steps_OptBayesExpt_wo_GD(
             N_steps_bayes, obe_sim, ret_particles=True, verbose=False)
         
     param_mean = np.asarray(bayes.param_mean)
     param_std = np.asarray(bayes.param_std)
 
-    d['param_mean'] = param_mean
-    d['param_std'] = param_std
-    d['param_true'] = param_true
+    d['param_mean'] = param_mean.astype('float32')
+    d['param_std'] = param_std.astype('float32')
+    d['param_true'] = param_true.astype('float32')
 
-    d['measurement_errors'] = np.asarray(errors)
+    d['measurement_errors'] = np.asarray(errors).astype('float32')
     _measurement_settings, _measurements = bayes.get_all_measurements()
-    d['measurement_settings'] = _measurement_settings
-    d['measurements'] = _measurements
+    d['measurement_settings'] = _measurement_settings.astype('float32')
+    d['measurements'] = _measurements.astype('float32')
+    d['utility'] = np.asarray(bayes.utility_list).astype('float32')
 
-    d['particles'] = particles_hist
-    d['particle_weights'] = p_weights_hist
+    d['particles'] = particles_hist.astype('float32')
+    d['particle_weights'] = p_weights_hist.astype('float32')
+    d['likyhd'] = likyhd_hist.astype('float32')
+    d['times'] = times.astype('float32')
+    d['signals'] = func_I_conv(times).astype('float32')
     return d
 
 if __name__ == '__main__':
@@ -140,19 +144,19 @@ if __name__ == '__main__':
     NUM_SAMPLES = len(X_test)
     print(f"task for pulse_width {pulse_width} and noise_level {noise_level} for {NUM_SAMPLES} samples.")
 
-    times = np.linspace(0, 5, 501)
+    times = np.linspace(0, 3, 121)
     parameters = (
         np.random.uniform(-3.0, -1.0, 501),
         np.random.uniform(-1.0,  0.0, 501),
         np.random.uniform( 0.0,  1.0, 501),
-        np.random.uniform( 0.0,  10.0, 501),
+        np.random.uniform( 0.0, 10.0, 501),
         np.random.uniform( 0.1,  2.0, 501)
         )
 
     def perform_task(TASK_NAME, RUN_NUMBER):
 
         if TASK_NAME in ['baseline', 'gd']:
-            selection_method = 'optimal'
+            selection_method = 'unique_optimal'
             settings = (times, )
         elif TASK_NAME == 'random':
             selection_method = 'random'
