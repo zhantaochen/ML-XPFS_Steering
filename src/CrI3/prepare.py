@@ -94,11 +94,11 @@ def prepare_CrI3_sample(times, pulse_width=0.2,
             torch.from_numpy(E_K), torch.from_numpy(Intens_K), 
             numIters=2000, mode='lorentzian')
         Intens_K_fitted = lorentzian(torch.from_numpy(E_K), param_X0, param_A, param_G).detach().numpy()
-    Sqw_mag = lorentzian(E_full, param_X0, param_A, param_G).detach()
+        Sqw_mag = lorentzian(E_full, param_X0, param_A, param_G).detach()
     
     fig, ax = plt.subplots(1,1)
     ax.plot(E_K, Intens_K_fitted)
-    ax.plot(E_K, Intens_K / Intens_K.max() * Intens_K_fitted.max())
+    ax.plot(E_K, Intens_K / Intens_K.max() * Intens_K_fitted.max(), '--')
 
     # meV_to_2piTHz = 2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0]
     dt = times[1]-times[0]

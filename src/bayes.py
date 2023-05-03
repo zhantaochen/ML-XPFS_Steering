@@ -55,13 +55,13 @@ class OptBayesExpt_CustomCost(obe.OptBayesExpt):
                 self.parameter_mins[i] + (self.parameter_maxs[i]-self.parameter_mins[i]) * np.random.rand(len(bad_idx)) for i in range(len(self.parameters))])
 
 class BayesianInference:
-    NUM_SAMPLES_PER_STEP = 10
     meV_to_2piTHz = torch.tensor(2 * np.pi * 1e-15 / const.physical_constants['hertz-electron volt relationship'][0])
     def __init__(
-        self, forward_model, settings=(), parameters=(), constants=(), 
+        self, forward_model, settings=(), parameters=(), constants=(), noise_level=1.0,
         pulse_width=None, reference_setting_value=None, model_uncertainty=False, 
-        parameter_mins=(0,0,0), parameter_maxs=(1,1,1),
-        cost_repulse_height=1.0, cost_repulse_width=0.25, selection_method='optimal', device='cpu'
+        parameter_mins=(), parameter_maxs=(), 
+        cost_repulse_height=10.0, cost_repulse_width=0.25, 
+        selection_method='optimal', utility_method='variance_full', device='cpu'
     ):
         # super().__init__()
         # self.register_module('forward_model', model)
@@ -76,6 +76,8 @@ class BayesianInference:
         self.parameter_mins = parameter_mins
         self.parameter_maxs = parameter_maxs
         self.selection_method = selection_method
+        self.utility_method = utility_method
+        self.noise_level = noise_level
 
         if device is None:
             self.device = 'cuda' if torch.cuda.is_exist() else 'cpu'
@@ -90,14 +92,13 @@ class BayesianInference:
         self.init_OptBayesExpt()
         self.init_saving_lists()
 
-
-
     def init_OptBayesExpt(self, ):
         self.obe_model = OptBayesExpt_CustomCost(
             measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
-            constants=self.constants, utility_method='variance_full',
+            constants=self.constants, utility_method=self.utility_method,
             cost_repulse_height=self.cost_repulse_height, cost_repulse_width=self.cost_repulse_width,
-            parameter_mins=self.parameter_mins, parameter_maxs=self.parameter_maxs)
+            parameter_mins=self.parameter_mins, parameter_maxs=self.parameter_maxs, 
+            noise_level_for_util_kld_poisson=self.noise_level)
         self.obe_model.set_selection_method(self.selection_method)
         # self.obe_model = OptBayesExpt_CustomCost(
         #     measurement_model=self.model_function, setting_values=self.settings, parameter_samples=self.parameters, 
@@ -251,6 +252,7 @@ class BayesianInference:
 
         if noise_mode is None:
             noise_mode = func_measure.noise_mode
+            # print('using noise mode', noise_mode)
         if noise_mode == 'gaussian':
             measurement = (next_setting, next_observable, func_measure.noise_level)
         elif noise_mode == 'poisson':

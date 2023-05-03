@@ -67,15 +67,16 @@ def update_dict_for_idx(idx, X, Y, model,
     d = {}
     param_true, func_I_conv, func_I_noconv = prepare_sample(
             X[idx], Y[idx], gamma, times, pulse_width=pulse_width, normalize_to_value=normalize_to_value, 
-            elas_amp_factor=float(np.random.normal(0.5, 1/6, 1).clip(0.0, 1.0)), elas_wid=float(np.random.normal(1., 1/3, 1).clip(0.1, 2.0)), elas_amp_abs_max=10.)
+            elas_amp_factor=float(np.random.normal(0.5, 1/6, 1).clip(0.0, 1.0)), elas_wid=float(np.random.normal(0.75, 0.25, 1).clip(0.1, 1.5)), elas_amp_abs_max=10.)
     obe_sim = obe.MeasurementSimulator(
         lambda s, p, c: measure_function(s, p, c, func_I_conv), param_true, (), noise_level=noise_level, noise_mode='poisson')
     
     bayes = BayesianInference(
-        model, settings, parameters,
+        model, settings, parameters, noise_level=noise_level,
         pulse_width=pulse_width, reference_setting_value=((0,), normalize_to_value),
         cost_repulse_height=10.0, cost_repulse_width=0.25,
-        parameter_mins=(-3., -1., 0., 0., 0.1), parameter_maxs=(-1., 0., 1., 10., 2.), selection_method=selection_method,
+        parameter_mins=(-3., -1., 0., 0., 0.1), parameter_maxs=(-1., 0., 1., 10., 2.), 
+        selection_method=selection_method, utility_method='variance_full',
         model_uncertainty=False, device=device)
     bayes.obe_model.set_selection_method(selection_method)
 
