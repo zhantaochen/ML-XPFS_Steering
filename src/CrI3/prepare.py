@@ -72,7 +72,7 @@ from ..utils_model import jit_batch_spec_to_Sqt
 
 def prepare_CrI3_sample(times, pulse_width=0.2, 
                         amp_increase_factor=0., 
-                        E_cutoff=5., S0_value=10, 
+                        E_cutoff=5., S0_value=10, avg_Gamma=True,
                         elas_bkg_amp_factor=0., elas_bkg_wid=1.0, mode='voigt'):
     fname = 'src/CrI3/fig3a1.spe'
     HH0_raw, E_raw, Z_raw, Err_raw = load_spe(fname)
@@ -93,8 +93,13 @@ def prepare_CrI3_sample(times, pulse_width=0.2,
         param_X0, param_A, param_G = fit_peak(
             torch.from_numpy(E_K), torch.from_numpy(Intens_K), 
             numIters=2000, mode='lorentzian')
+        if avg_Gamma:
+            param_G = torch.ones_like(param_G) * param_G.mean()
+            print("mean gamma is: ", param_G)
         Intens_K_fitted = lorentzian(torch.from_numpy(E_K), param_X0, param_A, param_G).detach().numpy()
-        Sqw_mag = lorentzian(E_full, param_X0, param_A, param_G).detach()
+        # Sqw_mag = lorentzian(E_full, param_X0, param_A, param_G).detach()
+        E_full_dense = torch.linspace(E_full.min(),E_full.max(),400)
+        Sqw_mag = lorentzian(E_full_dense, param_X0, param_A, param_G).detach()
     
     fig, ax = plt.subplots(1,1)
     ax.plot(E_K, Intens_K_fitted)
@@ -104,8 +109,9 @@ def prepare_CrI3_sample(times, pulse_width=0.2,
     dt = times[1]-times[0]
     times_extended = np.arange(times[0]-pulse_width, times[-1]+pulse_width, dt)
 
-    Sqt_mag = jit_batch_spec_to_Sqt(E_full, Sqw_mag, torch.from_numpy(times_extended)).sum(dim=1).squeeze() \
-        * torch.exp(amp_increase_factor * torch.from_numpy(times_extended))
+    Sqt_mag = jit_batch_spec_to_Sqt(
+        E_full_dense, Sqw_mag, torch.from_numpy(times_extended)).sum(dim=1).squeeze() \
+        * torch.exp(amp_increase_factor * torch.from_numpy(times_extended).abs())
 
     Sqw_bkg = elas_bkg_amp_factor * Sqw_mag.max() * torch.exp(-E_full.pow(2)/(2 * elas_bkg_wid**2)).detach()
     Sqt_bkg = jit_batch_spec_to_Sqt(E_full, Sqw_bkg, torch.from_numpy(times_extended)).sum(dim=1).squeeze()
@@ -114,13 +120,24 @@ def prepare_CrI3_sample(times, pulse_width=0.2,
     norm_factor_Sqt = S0_value / Sqt_tot[int(pulse_width / dt)]
     Sqt_tot *= norm_factor_Sqt
 
+    #debug
+    Sqw_mag_debug = lorentzian(
+        E_full_dense, param_X0, param_A, param_G-0.65).detach()
+    Sqt_mag_debug = jit_batch_spec_to_Sqt(
+        E_full_dense, Sqw_mag_debug, torch.from_numpy(times_extended)).sum(dim=1).squeeze() 
+    Sqt_tot_debug = (Sqt_mag_debug + Sqt_bkg).numpy()
+    norm_factor_Sqt_debug = S0_value / Sqt_tot_debug[int(pulse_width / dt)]
+    Sqt_tot_debug *= norm_factor_Sqt_debug
+    #debug
+
     fig, ax = plt.subplots(2,1)
-    ax[0].plot(E_full, Sqw_mag)
+    ax[0].plot(E_full_dense, Sqw_mag)
     ax[0].plot(E_full, Sqw_bkg)
-    ax[0].plot(E_full, Sqw_bkg+Sqw_mag)
+    # ax[0].plot(E_full, Sqw_bkg+Sqw_mag)
+    ax[1].plot(times_extended, Sqt_mag_debug.numpy()*norm_factor_Sqt_debug, '--')
     ax[1].plot(times_extended, Sqt_mag.numpy()*norm_factor_Sqt)
     ax[1].plot(times_extended, Sqt_bkg.numpy()*norm_factor_Sqt)
-    ax[1].plot(times_extended, Sqt_tot)
+    # ax[1].plot(times_extended, Sqt_tot)
 
     # get unconvolved interpolation function
     func_I_noconv = lambda t: interp_nb(t, times_extended, np.abs(Sqt_tot)**2)
@@ -128,9 +145,10 @@ def prepare_CrI3_sample(times, pulse_width=0.2,
     true_I_conv = get_I_conv(times, times_extended, Sqt_tot, pulse_width)
     true_I_conv = S0_value**2 * true_I_conv / true_I_conv[0]
     func_I_conv = lambda t: interp_nb(t, times, true_I_conv)
-    fig, ax = plt.subplots(1,1)
-    ax.plot(times_extended, np.abs(Sqt_tot)**2)
-    ax.plot(times, true_I_conv)
+
+    # fig, ax = plt.subplots(1,1)
+    # ax.plot(times_extended, np.abs(Sqt_tot)**2)
+    # ax.plot(times, true_I_conv)
 
     fig, axes = plt.subplots(1,2, sharey=True, gridspec_kw={'wspace': 0.0, 'width_ratios': [2, 1]})
     ax = axes[0]
@@ -146,4 +164,6 @@ def prepare_CrI3_sample(times, pulse_width=0.2,
     ax.set_xlabel('Intensities (a.u.)')
     ax.set_ylim([0,20])
 
-    return None, func_I_conv, func_I_noconv
+    return (None,None,param_G.mean().item()-amp_increase_factor,
+            elas_bkg_amp_factor*Sqw_mag.max().item(),elas_bkg_wid), \
+        func_I_conv, func_I_noconv
