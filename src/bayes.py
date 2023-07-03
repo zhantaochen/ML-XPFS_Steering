@@ -371,25 +371,12 @@ class BayesianInference:
         t = torch.from_numpy(unique_settings).squeeze()
         S = torch.from_numpy(mean_observables).squeeze()
         if init_bayes_guess:
-            # loss_hist, params_hist = self.forward_model.fit_measurement_with_OptBayesExpt_parameters(
-            #     t, S, (('J', 'D', 'gamma'), self.obe_model.mean(), self.obe_model.std()), lr=lr,
-            #     maxiter=N, batch_size=batch_size
-            # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
                 self.forward_model, t, S, (('J', 'D', 'gamma', 'elas_amp', 'elas_wid'), torch.from_numpy(self.obe_model.particles), (None,)*5), 
                 pulse_width=self.pulse_width, norm_I0=100, params_type = 'particles',
                 lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )
         else:
-            # loss_hist, params_hist = self.forward_model.fit_measurement_with_OptBayesExpt_parameters(
-            #     t, S, (('J', 'D', 'gamma'), (-2.0, -0.5, 0.5), (0.5, 0.25, 0.25)), lr=lr,
-            #     maxiter=N, batch_size=batch_size
-            # )
-            # loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
-            #     self.forward_model, t, S, (('J', 'D', 'gamma'), (-2.0, -0.5, 0.5), (1/3, 1/6, 1/6)), 
-            #     pulse_width=self.pulse_width, norm_I0=100, 
-            #     lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
-            # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
                 self.forward_model, t, S, (('J', 'D', 'gamma', 'elas_amp', 'elas_wid'), torch.from_numpy(np.vstack(self.parameters)), (None,)*5), 
                 pulse_width=self.pulse_width, norm_I0=100, params_type='particles',
@@ -502,8 +489,7 @@ class BayesianInference:
         
         particle_error_old = self.estimate_particle_error(self.obe_model.particles)
         particle_error_new = self.estimate_particle_error(particles)
-        if self.obe_model.n_particles % 2 == 1:
-            separator = (self.obe_model.n_particles + 1) // 4
+        separator = (self.obe_model.n_particles + 1) // 4
         self.obe_model.particles[:,particle_error_old.argsort()[-separator:]] = \
             particles[:,particle_error_new.argsort()[:separator]]
         if update_weights:

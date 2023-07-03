@@ -105,9 +105,17 @@ def fit_measurement_with_OptBayesExpt_parameters(
         loss_batch = (I_out.squeeze() - torch.atleast_2d(S).repeat_interleave(batch_size,dim=0).to(I_out)).pow(2).mean(dim=1)
         loss = loss_batch.mean()
         
+        # J_old = parameters.J.data.clone()
+        # D_old = parameters.D.data.clone()
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        # J_new = parameters.J.data.clone()
+        # D_new = parameters.D.data.clone()
+        # print("J change: ", (J_new - J_old).abs().mean())
+        # print("D change: ", (D_new - D_old).abs().mean())
 
         loss_hist.append(loss.item())
         
