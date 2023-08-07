@@ -168,5 +168,3 @@ class SpectrumPredictor(pl.LightningModule):
         loss = F.mse_loss(y_pred, y)
         
         self.log('val_loss', loss.item())
-
-        return loss

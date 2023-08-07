@@ -124,18 +124,24 @@ class BayesianInference:
 
     def handle_inputs(self, sets, pars, cons=None, device='cpu'):
         t, = sets
-        J, D, gamma, elas_amp, elas_wid = pars
+        J, D, gamma1, gamma2, elas_amp, elas_wid = pars
         if isinstance(t, (int, float)):
             t = torch.tensor([t,])
         else:
             t = torch.atleast_1d(array2tensor(t))
         t = t.to(device)
 
-        if isinstance(gamma, (int, float)):
-            gamma = torch.atleast_2d(torch.tensor([gamma]))
+        if isinstance(gamma1, (int, float)):
+            gamma1 = torch.atleast_2d(torch.tensor([gamma1]))
         else:
-            gamma = array2tensor(gamma)[:,None]
-        gamma = gamma.to(device)
+            gamma1 = array2tensor(gamma1)[:,None]
+        gamma1 = gamma1.to(device)
+
+        if isinstance(gamma2, (int, float)):
+            gamma2 = torch.atleast_2d(torch.tensor([gamma2]))
+        else:
+            gamma2 = array2tensor(gamma2)[:,None]
+        gamma2 = gamma2.to(device)
 
         if isinstance(elas_amp, (int, float)):
             elas_amp = torch.atleast_2d(torch.tensor([elas_amp]))
@@ -155,35 +161,7 @@ class BayesianInference:
         else:
             J = array2tensor(J)[:,None]
             D = array2tensor(D)[:,None]
-        return t, J, D, gamma, elas_amp, elas_wid
-
-    def model_function_noconv(self, sets, pars, cons, ret_tensor=False, norm_I0=100):
-        """ Evaluates a trusted model of the experiment's output
-        The equivalent of a fit function. The argument structure is
-        required by OptBayesExpt.
-        Args:
-            sets: A tuple of setting values, or a tuple of settings arrays
-            pars: A tuple of parameter arrays or a tuple of parameter values
-            cons: A tuple of floats
-        Returns:  the evaluated function
-        """
-        # device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        device = 'cpu'
-        t, J, D, gamma = self.handle_inputs(sets, pars, device=device)
-        self.forward_model.to(device)
-        x = torch.cat((J, D), dim=1).to(device)
-        if not self.model_uncertainty:
-            y = self.forward_model(x)
-        else:
-            y = self.forward_model(x)
-        omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
-        S_envelope = torch.exp(-torch.einsum("bm,t->bmt", F.relu(gamma), t))
-        S_pred = (jit_batch_spec_to_Sqt(omega, inten, t, self.meV_to_2piTHz) * S_envelope).sum(dim=1)
-        I_pred = torch.abs(S_pred)**2
-        if ret_tensor:
-            return I_pred.squeeze()
-        else:
-            return I_pred.detach().cpu().squeeze().numpy()
+        return t, J, D, gamma1, gamma2, elas_amp, elas_wid
 
     def model_function_conv(self, sets, pars, cons, ret_tensor=False, norm_I0=100, device='cpu'):
         """ Evaluates a trusted model of the experiment's output
@@ -198,7 +176,7 @@ class BayesianInference:
         # print(par_weights)
         # device = 'cuda' if torch.cuda.is_available() else 'cpu'
         # device = 'cpu'
-        t, J, D, gamma, elas_amp, elas_wid = self.handle_inputs(sets, pars, device=device)
+        t, J, D, gamma1, gamma2, elas_amp, elas_wid = self.handle_inputs(sets, pars, device=device)
         
         if not self.model_uncertainty:
             self.forward_model.to(device)
@@ -210,15 +188,6 @@ class BayesianInference:
         else:
             y_mu, y_var = self.forward_model(x)
             y = torch.distributions.MultivariateNormal(y_mu, y_var).sample()
-        # omega, inten = torch.split(y, (y.shape[1]//2, y.shape[1]//2), dim=1)
-        # t_extended = [torch.linspace(_t-self.pulse_width/2, _t+self.pulse_width/2, int(self.pulse_width/0.01)).to(device) for _t in t]
-        # t_extended = torch.vstack(t_extended).flatten().to(device)
-        # S_envelope = torch.exp(-torch.einsum("bm,nt->bmnt", F.relu(gamma), t_extended.abs().reshape(len(t),-1)))
-        # I_pred = torch.trapz(
-        #     (jit_batch_spec_to_Sqt(
-        #         omega, inten, t_extended, self.meV_to_2piTHz
-        #         ).sum(dim=1, keepdim=True).reshape(omega.shape[0],1,len(t),-1) * S_envelope).abs().pow(2), 
-        #         t_extended.reshape(len(t),-1), dim=-1) / self.pulse_width
 
         I_pred = get_I(t, y, gamma, 
                        torch.tensor(self.pulse_width).to(y).clone().detach(), 
@@ -371,12 +340,25 @@ class BayesianInference:
         t = torch.from_numpy(unique_settings).squeeze()
         S = torch.from_numpy(mean_observables).squeeze()
         if init_bayes_guess:
+            # loss_hist, params_hist = self.forward_model.fit_measurement_with_OptBayesExpt_parameters(
+            #     t, S, (('J', 'D', 'gamma'), self.obe_model.mean(), self.obe_model.std()), lr=lr,
+            #     maxiter=N, batch_size=batch_size
+            # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
                 self.forward_model, t, S, (('J', 'D', 'gamma', 'elas_amp', 'elas_wid'), torch.from_numpy(self.obe_model.particles), (None,)*5), 
                 pulse_width=self.pulse_width, norm_I0=100, params_type = 'particles',
                 lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
             )
         else:
+            # loss_hist, params_hist = self.forward_model.fit_measurement_with_OptBayesExpt_parameters(
+            #     t, S, (('J', 'D', 'gamma'), (-2.0, -0.5, 0.5), (0.5, 0.25, 0.25)), lr=lr,
+            #     maxiter=N, batch_size=batch_size
+            # )
+            # loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
+            #     self.forward_model, t, S, (('J', 'D', 'gamma'), (-2.0, -0.5, 0.5), (1/3, 1/6, 1/6)), 
+            #     pulse_width=self.pulse_width, norm_I0=100, 
+            #     lr=lr, maxiter=N, batch_size=self.obe_model.n_particles, model_uncertainty=self.model_uncertainty, verbose=False, device=self.device
+            # )
             loss_hist, params_hist = fit_measurement_with_OptBayesExpt_parameters(
                 self.forward_model, t, S, (('J', 'D', 'gamma', 'elas_amp', 'elas_wid'), torch.from_numpy(np.vstack(self.parameters)), (None,)*5), 
                 pulse_width=self.pulse_width, norm_I0=100, params_type='particles',
@@ -489,7 +471,8 @@ class BayesianInference:
         
         particle_error_old = self.estimate_particle_error(self.obe_model.particles)
         particle_error_new = self.estimate_particle_error(particles)
-        separator = (self.obe_model.n_particles + 1) // 4
+        if self.obe_model.n_particles % 2 == 1:
+            separator = (self.obe_model.n_particles + 1) // 4
         self.obe_model.particles[:,particle_error_old.argsort()[-separator:]] = \
             particles[:,particle_error_new.argsort()[:separator]]
         if update_weights:
